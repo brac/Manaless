@@ -8,6 +8,7 @@ limiter, fetches, raises on HTTP error, caches, and returns parsed JSON.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -29,6 +30,17 @@ HOST_DELAYS: dict[str, float] = {
 }
 _DEFAULT_DELAY = 0.20
 _DEFAULT_TIMEOUT = 20.0
+
+# On HTTP 429, honour Retry-After and retry rather than failing the pipeline.
+_MAX_RETRIES = 3
+_RETRY_AFTER_FALLBACK = 1.0
+
+
+def _retry_after_seconds(response: httpx.Response) -> float:
+    try:
+        return max(0.0, float(response.headers.get("Retry-After", "")))
+    except ValueError:
+        return _RETRY_AFTER_FALLBACK
 
 
 class HttpClient:
@@ -61,11 +73,13 @@ class HttpClient:
         cache_namespace: str | None = None,
         cache_key: str | None = None,
         ttl_seconds: float | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         """Fetch and parse JSON, consulting the cache when a key is supplied.
 
         Caching is enabled only when both ``cache_namespace`` and ``cache_key``
-        are given. Raises ``httpx.HTTPStatusError`` on a non-2xx response.
+        are given. Raises ``httpx.HTTPStatusError`` on a non-2xx response (after
+        retrying 429s per ``Retry-After``).
         """
         cacheable = cache_namespace is not None and cache_key is not None
         if cacheable:
@@ -73,10 +87,7 @@ class HttpClient:
             if hit is not None:
                 return hit
 
-        self._limiter_for(url).wait()
-        response = self._client.get(url)
-        response.raise_for_status()
-        data = response.json()
+        data = self._send("GET", url, headers=headers).json()
 
         if cacheable:
             self._cache.set(cache_namespace, cache_key, data)
@@ -84,10 +95,22 @@ class HttpClient:
 
     def get_text(self, url: str) -> str:
         """Fetch raw text (used for the EDHREC build-id homepage scrape)."""
-        self._limiter_for(url).wait()
-        response = self._client.get(url)
+        return self._send("GET", url).text
+
+    def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Rate-limited request with bounded 429 retry honouring ``Retry-After``."""
+        limiter = self._limiter_for(url)
+        response: httpx.Response | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            limiter.wait()
+            response = self._client.request(method, url, **kwargs)
+            if response.status_code == 429 and attempt < _MAX_RETRIES:
+                time.sleep(_retry_after_seconds(response))
+                continue
+            break
+        assert response is not None  # loop always assigns at least once
         response.raise_for_status()
-        return response.text
+        return response
 
     def _limiter_for(self, url: str) -> RateLimiter:
         host = urlparse(url).netloc

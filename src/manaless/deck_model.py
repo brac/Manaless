@@ -1,16 +1,97 @@
 """Deck model — the in-memory deck the UI mutates (build step 4; architecture.md).
 
-Single source of truth for the current build. Substitutions produce a new deck
-state (immutable updates, not in-place mutation per coding-style); the
-win-condition and bracket engines recompute off it. Kept UI-agnostic so the
-pipeline is callable headless for batch practice-ladder generation.
+Single source of truth for the current build. `Card` and `DeckModel` are
+immutable (frozen) — substitutions (step 4) will produce a *new* `DeckModel`
+rather than mutate in place, per coding-style. Kept UI-agnostic so the pipeline
+runs headless for batch practice-ladder generation.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 
+# Primary-type precedence for categorising a card (first match wins). A card with
+# multiple types (e.g. "Artifact Creature", "Land Creature") lands in the more
+# salient bucket — matching how deckbuilding sites group cards.
+CATEGORY_ORDER = (
+    "Creature",
+    "Planeswalker",
+    "Battle",
+    "Instant",
+    "Sorcery",
+    "Artifact",
+    "Enchantment",
+    "Land",
+)
+_OTHER = "Other"
+
+
+@dataclass(frozen=True, slots=True)
+class Card:
+    """A card in the deck: source quantity/name plus Scryfall enrichment.
+
+    `resolved=False` marks a card whose enrichment failed (kept so a single bad
+    name never drops a card from the deck silently — see `DeckModel.unresolved`).
+    """
+
+    name: str
+    quantity: int
+    type_line: str = ""
+    oracle_text: str = ""
+    mana_value: float = 0.0
+    color_identity: tuple[str, ...] = ()
+    image_url: str | None = None
+    scryfall_uri: str | None = None
+    is_dfc: bool = False
+    resolved: bool = True
+
+    @property
+    def category(self) -> str:
+        """Primary type bucket from the (front-face) type line."""
+        front = self.type_line.split("//", 1)[0]
+        for category in CATEGORY_ORDER:
+            if category in front:
+                return category
+        return _OTHER
+
+
+@dataclass(frozen=True, slots=True)
 class DeckModel:
-    """Enriched, categorised deck the substitution UI and engines read. Build step 4."""
+    """An enriched deck: commander(s) + mainboard, plus its EDHREC provenance."""
 
-    def __init__(self) -> None:
-        raise NotImplementedError("build step 4 — substitution")
+    commanders: tuple[Card, ...]
+    cards: tuple[Card, ...]
+    deck_id: str | None = None
+    source_url: str | None = None
+
+    def all_cards(self) -> tuple[Card, ...]:
+        return self.commanders + self.cards
+
+    @property
+    def total_cards(self) -> int:
+        return sum(card.quantity for card in self.all_cards())
+
+    @property
+    def unresolved(self) -> tuple[str, ...]:
+        """Names whose Scryfall enrichment failed."""
+        return tuple(card.name for card in self.all_cards() if not card.resolved)
+
+    def card_names(self) -> list[str]:
+        return [card.name for card in self.all_cards()]
+
+    def to_decklist(self) -> list[str]:
+        """Flat ``["1 Card Name", ...]`` lines (commanders first)."""
+        return [f"{card.quantity} {card.name}" for card in self.all_cards()]
+
+    def categorized(self) -> dict[str, list[Card]]:
+        """Mainboard grouped by primary type, in `CATEGORY_ORDER` order.
+
+        Commanders are excluded — they are surfaced separately by callers.
+        """
+        groups: dict[str, list[Card]] = {}
+        for card in self.cards:
+            groups.setdefault(card.category, []).append(card)
+        ordered = {cat: groups[cat] for cat in CATEGORY_ORDER if cat in groups}
+        if _OTHER in groups:
+            ordered[_OTHER] = groups[_OTHER]
+        return ordered

@@ -58,6 +58,29 @@ def test_http_error_raises(tmp_path):
         client.get_json("https://edhrec.com/_next/data/BUILD/deckpreview/x.json")
 
 
+def test_retries_on_429_then_succeeds(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(tmp_path, handler)
+    assert client.get_json("https://api.scryfall.com/cards/named?exact=Sol+Ring") == {"ok": True}
+    assert calls["n"] == 2  # one 429, one success
+
+
+def test_gives_up_after_max_429_retries(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "0"}, json={})
+
+    client = _client(tmp_path, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.get_json("https://api.scryfall.com/x")
+
+
 def test_known_hosts_get_their_configured_limiter(tmp_path):
     client = _client(tmp_path, lambda r: httpx.Response(200, json={}))
 

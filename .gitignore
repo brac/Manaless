@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Runtime caches (rebuilt from live APIs — see docs/architecture.md caching table)
+cache/
+
+# Large/derived data (precon calibration set is pulled, not committed)
+data/precons/
+
+# Env
+.env
+.env.*
+
+# macOS
+.DS_Store

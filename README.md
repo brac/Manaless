@@ -13,13 +13,16 @@ you fell for.
 
 ## Status
 
-**Phase 0 — groundwork** (precedes build-order step 1 in CLAUDE.md §3).
+**Phase 0 — groundwork — complete** (precedes build-order step 1 in CLAUDE.md §3).
 
 - [x] 0.1 Project scaffold + module map (`src/manaless/`)
 - [x] 0.2 Shared HTTP layer: per-host rate limiter + disk cache + JSON client
 - [x] 0.3 Fragile-point spike: live EDHREC build-id → deck-table → decklist
 - [x] 0.4 §12 verification sweep → [`docs/verified.md`](docs/verified.md)
-- [ ] 0.5 Prior-art acquisition + precon calibration dataset
+- [x] 0.5 Prior-art acquisition + precon calibration → [`docs/prior-art.md`](docs/prior-art.md)
+
+**Phase 0 is complete.** Next is build-order **step 1** (CLAUDE.md §3): harden
+the deck-fetch spine and add Scryfall enrichment on top of the 0.3 `EdhrecClient`.
 
 Run the spike (proves the spine against current live EDHREC):
 

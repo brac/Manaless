@@ -92,7 +92,15 @@ class EdhrecClient:
         return self._build_id
 
     def fetch_deck_table(self, commander: str) -> list[dict]:
-        """Curated deck table for a commander: ``[{urlhash, savedate, price, ...}]``.
+        """Curated deck table for a commander.
+
+        Each row (verified against a live response, CLAUDE.md §12) carries:
+        ``urlhash`` (deck id), ``savedate`` ("YYYY-MM-DD"), ``price`` (number),
+        ``salt`` (float saltiness), ``bracket`` (1-5), ``budget_label`` (int),
+        ``tags`` (theme strings), and per-type counts (``creature``, ``instant``,
+        ``sorcery``, ``artifact``, ``enchantment``, ``battle``, ``planeswalker``,
+        ``land``). There is **no per-deck popularity/views field** — these are
+        individual published lists, so recency is the only "what's hot" proxy.
 
         Returns an empty list when EDHREC has no indexed decks (the §5 fallback
         to an average deck would trigger on this signal).

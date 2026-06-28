@@ -9,10 +9,24 @@
     built yet — try a more popular commander.
   </p>
 {% else %}
-  <p class="muted">{{ rows|length }} curated deck(s), most recent first.</p>
+  <form method="get" action="/decks" class="sortbar">
+    <input type="hidden" name="commander" value="{{ commander }}">
+    <label>Sort by
+      <select name="sort" onchange="this.form.submit()">
+        {% for key, spec in sorts.items() %}
+        <option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ spec[0] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
+  <p class="muted">
+    {% if total > rows|length %}Showing top {{ rows|length }} of {{ total }}{% else %}{{ total }}{% endif %}
+    curated deck(s), sorted by {{ sorts[sort][0] }}.
+  </p>
   <table class="decks">
     <thead>
-      <tr><th>Saved</th><th>Price</th><th>Bracket</th><th>Salt</th><th></th></tr>
+      <tr><th>Saved</th><th>Price</th><th>Bracket</th><th title="EDHREC saltiness — higher = more divisive cards">Salt</th><th></th></tr>
     </thead>
     <tbody>
       {% for row in rows %}

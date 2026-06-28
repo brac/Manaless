@@ -67,6 +67,10 @@ table.decks { width: 100%; border-collapse: collapse; margin-top: .8rem; }
 table.decks th, table.decks td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--border); }
 table.decks th { color: var(--muted); font-weight: 600; font-size: .85rem; }
 .badge { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: .05rem .45rem; }
+.sortbar { margin-top: .8rem; display: flex; gap: .5rem; align-items: center; }
+.sortbar label { color: var(--muted); display: flex; gap: .4rem; align-items: center; }
+select { background: var(--panel); color: var(--ink); border: 1px solid var(--border); border-radius: 7px; padding: .35rem .5rem; font: inherit; }
+select:focus { outline: 2px solid var(--accent); }
 
 /* --- builder --- */
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--border); }

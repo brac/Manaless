@@ -134,12 +134,64 @@ def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
 
 
+# Deck-picker sort options: key -> (label, row field, reverse). Only fields the
+# EDHREC deck table actually provides (no per-deck popularity exists, so recency
+# is the "what's hot" proxy). Rows missing the field always sort to the end.
+DECK_SORTS: dict[str, tuple[str, str, bool]] = {
+    "recent": ("Newest", "savedate", True),
+    "oldest": ("Oldest", "savedate", False),
+    "price_low": ("Price: low → high", "price", False),
+    "price_high": ("Price: high → low", "price", True),
+    "bracket_low": ("Bracket: low → high", "bracket", False),
+    "bracket_high": ("Bracket: high → low", "bracket", True),
+    "salt_high": ("Saltiest", "salt", True),
+    "salt_low": ("Least salty", "salt", False),
+}
+DECK_LIST_LIMIT = 100  # Atraxa alone has ~42k indexed decks; show the top slice.
+
+
+def _sort_deck_rows(rows: list[dict], sort: str) -> list[dict]:
+    """Sort a deck table by a `DECK_SORTS` key, pushing rows missing the field last."""
+    _, field, reverse = DECK_SORTS.get(sort, DECK_SORTS["recent"])
+    numeric = field != "savedate"
+
+    def value(row):
+        v = row.get(field)
+        if numeric:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        return v or None
+
+    present = [r for r in rows if value(r) is not None]
+    missing = [r for r in rows if value(r) is None]
+    present.sort(key=value, reverse=reverse)
+    return present + missing
+
+
 @app.get("/decks", response_class=HTMLResponse)
-def decks(request: Request, commander: str, edhrec: EdhrecClient = Depends(get_edhrec)):
+def decks(
+    request: Request,
+    commander: str,
+    sort: str = "recent",
+    edhrec: EdhrecClient = Depends(get_edhrec),
+):
+    if sort not in DECK_SORTS:
+        sort = "recent"
     table = edhrec.fetch_deck_table(commander)
-    rows = sorted(table, key=lambda r: r.get("savedate", ""), reverse=True)
+    ordered = _sort_deck_rows(table, sort)
     return templates.TemplateResponse(
-        request, "decks.html", {"commander": commander, "rows": rows}
+        request,
+        "decks.html",
+        {
+            "commander": commander,
+            "rows": ordered[:DECK_LIST_LIMIT],
+            "total": len(ordered),
+            "limit": DECK_LIST_LIMIT,
+            "sort": sort,
+            "sorts": DECK_SORTS,
+        },
     )
 
 

@@ -49,7 +49,11 @@
   link, per-card `$`, copy/paste textarea as the 414 fallback) + a "🛒 Buy missing"
   topbar button + a live "N to buy" link in the owned summary. Live-validated:
   real Atraxa deck vs the 442-card collection → "88 to buy, 4 basics skipped".
-- **Tests: 161 passing**, no live network in the suite (httpx MockTransport / fakes;
+- **Deck picker sorting (web):** `/decks?sort=` over the fields EDHREC actually
+  provides — newest/oldest, price ↑/↓, bracket ↑/↓, saltiest/least-salty (no
+  per-deck popularity exists in the data). Capped to the **top 100** of (for Atraxa)
+  ~42k rows, with a "showing top N of M" line. Sort spec: `web.app.DECK_SORTS`.
+- **Tests: 166 passing**, no live network in the suite (httpx MockTransport / fakes;
   web routes via FastAPI `TestClient` with deps overridden).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 

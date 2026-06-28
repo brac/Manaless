@@ -23,7 +23,11 @@ from manaless.web.app import (
 
 class FakeEdhrec:
     def fetch_deck_table(self, commander):
-        return [{"urlhash": "newest", "savedate": "2026-06-27", "price": 420, "bracket": 3}]
+        return [
+            {"urlhash": "newest", "savedate": "2026-06-27", "price": 420, "bracket": 3, "salt": 20.0},
+            {"urlhash": "cheap", "savedate": "2025-01-01", "price": 50, "bracket": 2, "salt": 5.0},
+            {"urlhash": "pricey", "savedate": "2025-06-01", "price": 900, "bracket": 4, "salt": 80.0},
+        ]
 
     def fetch_deck(self, deck_id):
         return ["1 Atraxa, Praetors' Voice", "1 Sol Ring", "1 Counterspell"]
@@ -78,6 +82,42 @@ def test_decks_picker_lists_rows(client):
     assert r.status_code == 200
     assert "newest" in r.text  # the deck_id is in the Build form
     assert "Build" in r.text
+
+
+def _order(text, *needles):
+    return [text.index(n) for n in needles]
+
+
+def test_decks_default_sort_is_newest(client):
+    r = client.get("/decks", params={"commander": "X"})
+    a, b, c = _order(r.text, "newest", "pricey", "cheap")  # 2026, 2025-06, 2025-01
+    assert a < b < c
+
+
+def test_decks_sort_by_price_low_to_high(client):
+    r = client.get("/decks", params={"commander": "X", "sort": "price_low"})
+    cheap, newest, pricey = _order(r.text, "cheap", "newest", "pricey")  # 50, 420, 900
+    assert cheap < newest < pricey
+
+
+def test_decks_sort_by_bracket_high(client):
+    r = client.get("/decks", params={"commander": "X", "sort": "bracket_high"})
+    pricey, newest, cheap = _order(r.text, "pricey", "newest", "cheap")  # 4, 3, 2
+    assert pricey < newest < cheap
+
+
+def test_decks_sort_dropdown_offers_options(client):
+    r = client.get("/decks", params={"commander": "X", "sort": "salt_high"})
+    assert 'name="sort"' in r.text
+    assert "Saltiest" in r.text and "Price: low" in r.text
+    assert 'value="salt_high" selected' in r.text  # current sort preserved
+
+
+def test_decks_unknown_sort_falls_back_to_recent(client):
+    r = client.get("/decks", params={"commander": "X", "sort": "bogus"})
+    assert r.status_code == 200
+    a, b, c = _order(r.text, "newest", "pricey", "cheap")
+    assert a < b < c
 
 
 def test_build_creates_session_and_renders_readouts(client):

@@ -2,6 +2,10 @@
 <p class="warn">Unenriched (Scryfall couldn't resolve): {{ deck.unresolved | join(', ') }}</p>
 {% endif %}
 
+{% if owned %}
+<p class="owned-summary">You own <strong>{{ owned_have }}</strong> of {{ owned_total }} cards in this deck.</p>
+{% endif %}
+
 {% for category, cards in deck.categorized().items() %}
 <section class="cat">
   <h3>{{ category }} <span class="muted">({{ cards | sum(attribute='quantity') }})</span></h3>
@@ -13,13 +17,17 @@
       {% else %}
         <div class="noimg">{{ card.name }}</div>
       {% endif %}
-      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}</div>
+      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
+        {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
+      </div>
       <div class="cardctl">
         <form class="swap" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
               hx-indicator="#global-spinner">
           <input type="hidden" name="old_name" value="{{ card.name }}">
           <input type="text" name="new_name" placeholder="swap to…" autocomplete="off">
         </form>
+        <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
+           title="Buy on TCGplayer">$</a>
         <button class="rm" title="remove" hx-post="/build/remove" hx-target="#cardlist"
                 hx-swap="outerHTML" hx-indicator="#global-spinner"
                 hx-vals='{"name": {{ card.name | tojson }} }'>✕</button>

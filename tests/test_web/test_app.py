@@ -8,9 +8,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 import manaless.web.readout as readout_mod
+from manaless.collection import Collection
 from manaless.scryfall_client import ScryfallCard
 from manaless.spellbook_client import BracketEstimate, Combo, ComboResults
-from manaless.web.app import app, get_edhrec, get_enrich, get_http
+from manaless.web.app import (
+    app,
+    get_collection_path,
+    get_edhrec,
+    get_enrich,
+    get_http,
+    get_owned,
+)
 
 
 class FakeEdhrec:
@@ -34,7 +42,13 @@ def _enrich(names):
 
 
 @pytest.fixture
-def client(monkeypatch):
+def owned():
+    """The owned-cards Collection the app sees; tests may mutate it before building."""
+    return Collection()
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path, owned):
     monkeypatch.setattr(readout_mod, "find_my_combos", lambda http, deck: ComboResults("WUBRG", (), ()))
     monkeypatch.setattr(
         readout_mod, "estimate_bracket", lambda http, deck: BracketEstimate(tag="C", cards=(), combos=())
@@ -42,6 +56,8 @@ def client(monkeypatch):
     app.dependency_overrides[get_http] = lambda: None
     app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()
     app.dependency_overrides[get_enrich] = lambda: _enrich
+    app.dependency_overrides[get_owned] = lambda: owned
+    app.dependency_overrides[get_collection_path] = lambda: tmp_path / "collection.json"
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -119,3 +135,39 @@ def test_edit_without_session_redirects_home(client):
     r = client.post("/build/substitute", data={"old_name": "X", "new_name": "Y"}, follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/"
+
+
+# --- step 5: single-card buy button -------------------------------------
+
+def test_build_shows_tcgplayer_buy_links(client):
+    r = _build(client)
+    assert "tcgplayer.com/massentry" in r.text  # per-card buy link present
+
+
+# --- collection import + owned flagging ---------------------------------
+
+def test_collection_page_renders(client):
+    r = client.get("/collection")
+    assert r.status_code == 200
+    assert "collection" in r.text.lower()
+
+
+def test_import_collection_csv_persists_and_reports(client, tmp_path):
+    csv = b"Name,Quantity\nSol Ring,2\nCounterspell,1\n"
+    r = client.post("/collection/import", files={"file": ("export.csv", csv, "text/csv")})
+    assert r.status_code == 200
+    assert "Imported 2 cards" in r.text  # distinct count
+    assert (tmp_path / "collection.json").exists()  # persisted to the injected path
+
+
+def test_import_bad_csv_shows_error_not_500(client):
+    r = client.post("/collection/import", files={"file": ("bad.csv", b"Foo,Bar\n1,2\n", "text/csv")})
+    assert r.status_code == 200
+    assert "No card-name column" in r.text  # the error surfaces (apostrophes are HTML-escaped)
+
+
+def test_owned_cards_flagged_in_builder(client, owned):
+    owned.add("Sol Ring", 1)  # mutate the Collection the app sees
+    r = _build(client)
+    assert "✓ owned" in r.text
+    assert "You own" in r.text and "1</strong> of 2" in r.text

@@ -2,7 +2,8 @@
 
 > **Read this first, then [`CLAUDE.md`](CLAUDE.md) (the bible).** This file is the
 > live "where we are" for a fresh agent picking up the work. Last updated after
-> **build step 4 fully landed**, including the FastAPI + HTMX web UI.
+> **build step 5 (single-card buy) + collection import landed** on top of the
+> step-4 FastAPI + HTMX web UI.
 
 ## TL;DR — current position
 
@@ -31,8 +32,20 @@
   one-click "Add 1" additions, card images, `.dck` download. Full funnel live-tested
   (Atraxa: bracket 3, combo; swap recomputes; 100-line `.dck`).
   `python -m manaless.web` → http://127.0.0.1:8000.
-- **Build steps 5–6 (buy): NOT STARTED** (buy stubs in place, tagged with their step).
-- **Tests: 125 passing**, no live network in the suite (httpx MockTransport / fakes;
+- **Build step 5 (single-card buy): DONE.** `buy.single_card_url` → TCGplayer Mass
+  Entry deep link (`?c=qty name||…&productline=Magic`, URL format verified against
+  several real impls). Surfaced as a per-card `$` "Buy" link in the builder
+  (`buy_url` Jinja global).
+- **Collection import: DONE** (the §9 owned-cards file; groundwork for step 6).
+  `collection.Collection` loads a **Collectr** CSV (column-tolerant: sniffs name/qty
+  from header aliases, sums duplicate rows) or JSON; persisted to gitignored
+  `collection.json`. Web: `/collection` upload page; owned cards flagged in the
+  builder ("✓ owned" + "you own X of Y"). **Open: confirm the auto-detected columns
+  against a real Collectr export** (alias list may need a tweak) and add a real-file
+  fixture.
+- **Build step 6 (deck-diff buy): NOT STARTED** — `deck_diff_url` still a stub.
+  Build only after falling for a paper deck. `Collection` is now ready for it.
+- **Tests: 150 passing**, no live network in the suite (httpx MockTransport / fakes;
   web routes via FastAPI `TestClient` with deps overridden).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
@@ -82,24 +95,29 @@ Repeat runs are instant (disk cache in `cache/`).
 | `bracket.py` | done (step 3) | **`evaluate_bracket(deck, estimate, edhrec_bracket=) -> BracketReadout`** — pure; EDHREC label first, else tag→1–5 + custom layer; calibrated vs precons |
 | `dck_export.py` | done (step 4) | **`to_dck`/`write_dck`/`dck_filename`** + CLI; commander → `SB:`, DFC front face, placeholder `[XXX:0]` printing (importer regex needs the bracket; name fallback resolves). Live-validated on a 100-card Atraxa deck |
 | `web/` package | done (step 4 UI) | **FastAPI + HTMX + Jinja** app. `app.py` (lifespan-scoped sync `HttpClient` on `app.state`, sync handlers in threadpool, `get_http/get_edhrec/get_enrich/get_store` deps for test override), `readout.py` (`compute_readouts` = win-cons + bracket in one cached pass), `session.py` (cookie-keyed in-memory `SessionStore`, per-session lock), `templates/` + `static/` (vendored `htmx.min.js`, hand CSS), `__main__.py`. Reuses every engine; no logic duplicated |
-| `buy.py`, `collection.py` | **stub** (steps 5/6) | build last, on demand |
+| `buy.py` | done (step 5) | **`single_card_url(name, *, quantity=1)`** + `mass_entry_url(entries)` (shared `||`-joined `c=` builder). `deck_diff_url` still a stub (step 6) |
+| `collection.py` | done (§9) | **`Collection`** ({name→qty}, case-insensitive `owns/quantity`, `total/distinct`). `from_csv` (column-tolerant: name/qty header aliases, sums dup rows, BOM-safe), `from_json`, `load`(dispatch on suffix), `save`. Built for the Collectr import + step-6 diff |
 
 ## What to do next
 
-**Steps 1–4 are done, including the web UI.** The funnel works end to end: search a
+**Steps 1–5 done + collection import.** The funnel works end to end: search a
 commander → pick a real EDHREC deck → substitute with live win-condition + bracket
-feedback → download a `.dck`. Natural next moves, in rough priority:
+feedback → per-card TCGplayer buy links → download a `.dck`. Import a Collectr CSV at
+`/collection` to flag owned cards. Natural next moves, in rough priority:
 
-1. **Play-test the loop in XMage.** Export a `.dck` from the UI, load it in XMage vs
+1. **Confirm the Collectr CSV columns.** The import auto-detects name/quantity from a
+   list of header aliases (`collection._NAME_HEADERS`/`_QTY_HEADERS`). Verify against
+   a real Collectr export; if its headers differ, add them and a real-file fixture.
+2. **Play-test the loop in XMage.** Export a `.dck` from the UI, load it in XMage vs
    AI, confirm cards resolve and the bracket *feels* right. This is the whole point
    (CLAUDE.md §1) and will surface what the readouts are missing better than any
    spec.
-2. **Steps 5–6 — buy** (CLAUDE.md §3, on demand only). Step 5 (single-card →
-   TCGplayer Mass Entry URL) the first time a card is actually wanted; step 6
-   (deck-diff vs `collection.py`) only after falling for a paper deck. Stubs in
-   `buy.py`/`collection.py`. See [buy-pipeline.md](buy-pipeline.md). **Do NOT build
-   step 6 speculatively.** When built, wiring a "Buy missing cards" button into the
-   web builder is trivial (it already has the session `DeckModel`).
+3. **Step 6 — deck-diff buy** (CLAUDE.md §3, on demand only): `.dck` minus
+   `Collection` → Mass Entry URL of only the missing cards. `deck_diff_url` is the
+   last stub; `Collection` + `mass_entry_url` are ready for it. Build only after
+   falling for a paper deck — **not speculatively.** Wiring a "Buy missing cards"
+   button into the builder is then trivial (it has the session `DeckModel` + owned
+   collection). See [buy-pipeline.md](buy-pipeline.md).
 3. **UI polish backlog** (only if real use wants it):
    - **EDHREC synergy "substitution palette"** — the deferred parts-bin (CLAUDE.md
      §4/§11). Needs a new `edhrec_client` method for the synergy/inclusion endpoint;

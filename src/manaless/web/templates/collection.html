@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div class="cmd">
+    <a href="/" class="back">←</a>
+    <strong>Your collection</strong>
+    <span class="muted">{{ owned.distinct }} cards · {{ owned.total }} total</span>
+  </div>
+</div>
+
+<section class="collection">
+  {% if message %}<div class="flash ok">{{ message }}</div>{% endif %}
+  {% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
+
+  <p class="tagline">
+    Import a CSV exported from <strong>Collectr</strong> (or any export with a
+    card-name and quantity column). Owned cards are flagged in the builder, and
+    it sets up the deck-diff buy. The file stays local — it is never uploaded
+    anywhere but this app.
+  </p>
+
+  <form method="post" action="/collection/import" enctype="multipart/form-data" class="import">
+    <input type="file" name="file" accept=".csv,.json,text/csv" required>
+    <button type="submit">Import</button>
+  </form>
+
+  <p class="muted">
+    From Collectr: open your collection → export to CSV → choose that file here.
+    Re-importing replaces the stored collection.
+  </p>
+</section>
+{% endblock %}

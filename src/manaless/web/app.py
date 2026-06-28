@@ -16,11 +16,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Request, Response
+from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from manaless.buy import single_card_url
+from manaless.collection import Collection
 from manaless.deck_builder import (
     NoDecksAvailable,
     add_card,
@@ -30,13 +32,18 @@ from manaless.deck_builder import (
 from manaless.edhrec_client import EdhrecClient
 from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
-from manaless.paths import CACHE_DIR
+from manaless.paths import CACHE_DIR, PROJECT_ROOT
 from manaless.scryfall_client import get_collection
 from manaless.web.readout import compute_readouts
 from manaless.web.session import COOKIE_NAME, BuildSession, SessionStore
 
 _HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+# Per-card "Buy" links resolve through this in any template (build step 5).
+templates.env.globals["buy_url"] = single_card_url
+
+# The owned-cards file (§9). Gitignored; local only. Imported from a Collectr CSV.
+COLLECTION_PATH = PROJECT_ROOT / "collection.json"
 
 
 @asynccontextmanager
@@ -47,6 +54,8 @@ async def lifespan(app: FastAPI):
     app.state.edhrec = EdhrecClient(http)
     app.state.enrich = lambda names: get_collection(http, names)[0]
     app.state.sessions = SessionStore()
+    app.state.collection_path = COLLECTION_PATH
+    app.state.collection = Collection.load(COLLECTION_PATH)
     try:
         yield
     finally:
@@ -75,24 +84,41 @@ def get_store(request: Request) -> SessionStore:
     return request.app.state.sessions
 
 
+def get_owned(request: Request) -> Collection:
+    return request.app.state.collection
+
+
+def get_collection_path(request: Request) -> Path:
+    return request.app.state.collection_path
+
+
 # --- helpers -------------------------------------------------------------
 
-def _render_builder(request: Request, session: BuildSession, *, error: str | None = None):
+def _owned_summary(deck, owned: Collection) -> tuple[int, int]:
+    """``(distinct mainboard cards owned, distinct mainboard cards)`` for the header."""
+    return sum(1 for c in deck.cards if owned.owns(c.name)), len(deck.cards)
+
+
+def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) -> dict:
+    have, total = _owned_summary(session.deck, owned)
+    return {
+        "deck": session.deck,
+        "readouts": session.readouts,
+        "owned": owned,
+        "owned_have": have,
+        "owned_total": total,
+        "error": error,
+    }
+
+
+def _render_builder(request, session, owned, *, error=None):
     """Full builder page for ``GET /build`` and the initial ``POST /build``."""
-    return templates.TemplateResponse(
-        request,
-        "build.html",
-        {"deck": session.deck, "readouts": session.readouts, "error": error},
-    )
+    return templates.TemplateResponse(request, "build.html", _builder_ctx(session, owned, error))
 
 
-def _render_update(request: Request, session: BuildSession, *, error: str | None = None):
+def _render_update(request, session, owned, *, error=None):
     """HTMX fragment: new card list (primary target) + OOB readouts + flash."""
-    return templates.TemplateResponse(
-        request,
-        "_update.html",
-        {"deck": session.deck, "readouts": session.readouts, "error": error},
-    )
+    return templates.TemplateResponse(request, "_update.html", _builder_ctx(session, owned, error))
 
 
 def _recompute_into(session: BuildSession, http: HttpClient, deck) -> None:
@@ -125,6 +151,7 @@ def build(
     edhrec: EdhrecClient = Depends(get_edhrec),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
 ):
     try:
         deck = build_deck(edhrec, enrich, commander, deck_id=deck_id)
@@ -136,17 +163,21 @@ def build(
     session = BuildSession(deck=deck, readouts=readouts)
     sid = store.new_id()
     store.set(sid, session)
-    resp = _render_builder(request, session)
+    resp = _render_builder(request, session, owned)
     resp.set_cookie(COOKIE_NAME, sid, httponly=True, samesite="lax")
     return resp
 
 
 @app.get("/build", response_class=HTMLResponse)
-def build_page(request: Request, store: SessionStore = Depends(get_store)):
+def build_page(
+    request: Request,
+    store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
+):
     session = store.get(request.cookies.get(COOKIE_NAME))
     if session is None:
         return RedirectResponse("/", status_code=303)
-    return _render_builder(request, session)
+    return _render_builder(request, session, owned)
 
 
 @app.post("/build/substitute", response_class=HTMLResponse)
@@ -157,21 +188,22 @@ def substitute(
     http: HttpClient = Depends(get_http),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
 ):
     session = store.get(request.cookies.get(COOKIE_NAME))
     if session is None:
         return RedirectResponse("/", status_code=303)
     new_name = new_name.strip()
     if not new_name:
-        return _render_update(request, session, error="Enter a card name to swap in.")
+        return _render_update(request, session, owned, error="Enter a card name to swap in.")
     with session.lock:
         try:
             deck = substitute_card(enrich, session.deck, old_name, new_name)
         except KeyError:
-            return _render_update(request, session, error=f"{old_name!r} is not in the deck.")
+            return _render_update(request, session, owned, error=f"{old_name!r} is not in the deck.")
         _recompute_into(session, http, deck)
         error = _unresolved_note(deck, new_name)
-        return _render_update(request, session, error=error)
+        return _render_update(request, session, owned, error=error)
 
 
 @app.post("/build/remove", response_class=HTMLResponse)
@@ -180,6 +212,7 @@ def remove(
     name: str = Form(...),
     http: HttpClient = Depends(get_http),
     store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
 ):
     session = store.get(request.cookies.get(COOKIE_NAME))
     if session is None:
@@ -188,9 +221,9 @@ def remove(
         try:
             deck = session.deck.remove(name)
         except KeyError:
-            return _render_update(request, session, error=f"{name!r} is not in the deck.")
+            return _render_update(request, session, owned, error=f"{name!r} is not in the deck.")
         _recompute_into(session, http, deck)
-        return _render_update(request, session)
+        return _render_update(request, session, owned)
 
 
 @app.post("/build/add", response_class=HTMLResponse)
@@ -200,6 +233,7 @@ def add(
     http: HttpClient = Depends(get_http),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
 ):
     session = store.get(request.cookies.get(COOKIE_NAME))
     if session is None:
@@ -207,7 +241,7 @@ def add(
     with session.lock:
         deck = add_card(enrich, session.deck, name.strip())
         _recompute_into(session, http, deck)
-        return _render_update(request, session, error=_unresolved_note(deck, name.strip()))
+        return _render_update(request, session, owned, error=_unresolved_note(deck, name.strip()))
 
 
 @app.post("/build/reset")
@@ -231,6 +265,46 @@ def export_dck(request: Request, store: SessionStore = Depends(get_store)):
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/collection", response_class=HTMLResponse)
+def collection_page(
+    request: Request,
+    owned: Collection = Depends(get_owned),
+    message: str | None = None,
+    error: str | None = None,
+):
+    return templates.TemplateResponse(
+        request, "collection.html", {"owned": owned, "message": message, "error": error}
+    )
+
+
+@app.post("/collection/import", response_class=HTMLResponse)
+def collection_import(
+    request: Request,
+    file: UploadFile = File(...),
+    path: Path = Depends(get_collection_path),
+):
+    """Import a Collectr (or any name+qty) CSV/JSON export into the owned-cards file."""
+    import json
+
+    raw = file.file.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    try:
+        if (file.filename or "").casefold().endswith(".json"):
+            owned = Collection.from_json(json.loads(text))
+        else:
+            owned = Collection.from_csv(text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "collection.html",
+            {"owned": request.app.state.collection, "error": f"Couldn't read {file.filename!r}: {exc}"},
+        )
+    owned.save(path)
+    request.app.state.collection = owned  # live app now sees the new collection
+    msg = f"Imported {owned.distinct} cards ({owned.total} total) from {file.filename!r}."
+    return templates.TemplateResponse(request, "collection.html", {"owned": owned, "message": msg})
 
 
 def _unresolved_note(deck, name: str) -> str | None:

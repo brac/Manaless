@@ -111,6 +111,14 @@ table.decks th { color: var(--muted); font-weight: 600; font-size: .85rem; }
 .flash.ok { color: var(--good); }
 .flash.bad { color: var(--bad); }
 
+/* --- buy missing --- */
+.buy-missing { max-width: 720px; margin: 1.5rem auto; }
+.missing-list { list-style: none; padding: 0; margin: 1rem 0; }
+.missing-list li { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .35rem .2rem; border-bottom: 1px solid var(--border); }
+.paste { margin-top: 1rem; }
+.paste textarea { width: 100%; background: var(--panel); color: var(--ink); border: 1px solid var(--border); border-radius: 7px; padding: .5rem; font-family: ui-monospace, monospace; font-size: .85rem; }
+.big-ok { font-size: 1.4rem; color: var(--good); }
+
 /* --- readouts --- */
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1rem; margin-bottom: 1rem; }
 .panel p { margin: .35rem 0; }

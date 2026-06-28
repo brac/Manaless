@@ -3,7 +3,8 @@
 {% endif %}
 
 {% if owned %}
-<p class="owned-summary">You own <strong>{{ owned_have }}</strong> of {{ owned_total }} cards in this deck.</p>
+<p class="owned-summary">You own <strong>{{ owned_have }}</strong> of {{ owned_total }} cards in this deck —
+  {% if missing_count %}<a href="/build/buy-missing">{{ missing_count }} to buy →</a>{% else %}you have the whole deck 🎉{% endif %}</p>
 {% endif %}
 
 {% for category, cards in deck.categorized().items() %}

@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from manaless.buy import single_card_url
+from manaless.buy import deck_diff, is_basic_land, mass_entry_url, single_card_url
 from manaless.collection import Collection
 from manaless.deck_builder import (
     NoDecksAvailable,
@@ -107,6 +107,7 @@ def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) ->
         "owned": owned,
         "owned_have": have,
         "owned_total": total,
+        "missing_count": len(deck_diff(session.deck, owned)),
         "error": error,
     }
 
@@ -264,6 +265,35 @@ def export_dck(request: Request, store: SessionStore = Depends(get_store)):
         content=to_dck(session.deck),
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/build/buy-missing", response_class=HTMLResponse)
+def buy_missing(
+    request: Request,
+    store: SessionStore = Depends(get_store),
+    owned: Collection = Depends(get_owned),
+):
+    """Review page: the cards in the current deck you don't own, + a TCGplayer link."""
+    session = store.get(request.cookies.get(COOKIE_NAME))
+    if session is None:
+        return RedirectResponse("/", status_code=303)
+    missing = deck_diff(session.deck, owned)
+    basics_skipped = sum(
+        1
+        for c in session.deck.all_cards()
+        if is_basic_land(c.name) and c.quantity - owned.quantity(c.name) > 0
+    )
+    return templates.TemplateResponse(
+        request,
+        "buy_missing.html",
+        {
+            "deck": session.deck,
+            "missing": missing,
+            "to_buy": sum(qty for qty, _ in missing),
+            "basics_skipped": basics_skipped,
+            "buy_all_url": mass_entry_url(missing) if missing else None,
+        },
     )
 
 

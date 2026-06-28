@@ -48,6 +48,36 @@ def single_card_url(name: str, *, quantity: int = 1) -> str:
     return mass_entry_url([(quantity, name)])
 
 
+# Basic lands are excluded from the buy list by default: nobody mass-orders
+# basics (free at any game store), and ~35 of them per deck just pad the cart.
+_BASIC_LANDS = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
+_SNOW = "snow-covered "
+
+
+def is_basic_land(name: str) -> bool:
+    n = name.casefold()
+    if n.startswith(_SNOW):
+        n = n[len(_SNOW):]
+    return n in _BASIC_LANDS
+
+
+def deck_diff(deck, collection: Collection, *, include_basics: bool = False) -> list[tuple[int, str]]:
+    """``deck`` minus what you own -> ``[(qty_to_buy, name), ...]``. Build step 6.
+
+    Quantity-aware (buy ``need - owned``, never negative); commanders included;
+    basic lands skipped unless ``include_basics``. ``deck`` is any object with
+    ``all_cards()`` yielding cards that have ``name`` and ``quantity``.
+    """
+    missing: list[tuple[int, str]] = []
+    for card in deck.all_cards():
+        if not include_basics and is_basic_land(card.name):
+            continue
+        short = card.quantity - collection.quantity(card.name)
+        if short > 0:
+            missing.append((short, card.name))
+    return missing
+
+
 def deck_diff_url(deck, collection: Collection) -> str:  # deck: DeckModel
-    """Missing cards (deck minus collection) -> Mass Entry URL. Build step 6."""
-    raise NotImplementedError("build step 6 — deck-diff buy")
+    """Missing cards (deck minus collection) -> TCGplayer Mass Entry URL. Step 6."""
+    return mass_entry_url(deck_diff(deck, collection))

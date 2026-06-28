@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div class="cmd">
+    <a href="/build" class="back">←</a>
+    <strong>Buy missing cards</strong>
+    <span class="muted">{{ deck.commanders | map(attribute='name') | join(' & ') }}</span>
+  </div>
+</div>
+
+<section class="buy-missing">
+  {% if missing %}
+  <p>
+    <strong>{{ to_buy }}</strong> card{{ '' if to_buy == 1 else 's' }} to buy
+    ({{ missing | length }} distinct){% if basics_skipped %} ·
+    <span class="muted">{{ basics_skipped }} basic-land type{{ '' if basics_skipped == 1 else 's' }} not listed</span>{% endif %}.
+  </p>
+
+  <p>
+    <a class="btn" href="{{ buy_all_url }}" target="_blank" rel="noopener">🛒 Buy these on TCGplayer →</a>
+  </p>
+
+  <ul class="missing-list">
+    {% for qty, name in missing %}
+    <li>
+      <span>{{ qty }}× {{ name }}</span>
+      <a class="buy" href="{{ buy_url(name) }}" target="_blank" rel="noopener" title="Buy just this one">$</a>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <details class="paste">
+    <summary>Copy/paste list (if the link is too long)</summary>
+    <textarea readonly rows="10">{% for qty, name in missing %}{{ qty }} {{ name }}
+{% endfor %}</textarea>
+  </details>
+  {% else %}
+  <p class="big-ok">You own the whole deck 🎉</p>
+  <p class="muted">Nothing to buy (basic lands aside). <a href="/build">← back to the builder</a></p>
+  {% endif %}
+</section>
+{% endblock %}

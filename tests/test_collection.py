@@ -74,6 +74,14 @@ def test_missing_name_column_raises_with_helpful_message():
         Collection.from_csv("Foo,Bar\n1,2\n")
 
 
+def test_dfc_matches_on_front_face_either_spelling():
+    # owning the front face means owning the double-faced card, and vice versa
+    front = Collection.from_csv('Name,Quantity\n"Valki, God of Lies",1\n')
+    assert front.owns("Valki, God of Lies // Tibalt, Cosmic Impostor")
+    full = Collection.from_csv('Name,Quantity\n"Valki, God of Lies // Tibalt",1\n')
+    assert full.owns("Valki, God of Lies")
+
+
 def test_json_roundtrip_through_disk(tmp_path):
     col = Collection.from_csv("Name,Quantity\nSol Ring,2\nMana Crypt,1\n")
     path = tmp_path / "collection.json"

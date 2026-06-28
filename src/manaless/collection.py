@@ -35,6 +35,16 @@ def _norm(header: str) -> str:
     return header.strip().lstrip("﻿").casefold()
 
 
+def _key(name: str) -> str:
+    """Lookup key for a card name: front face, case-folded.
+
+    Double-faced / split cards are one physical card; collection apps and
+    decklists disagree on whether they store ``"Front // Back"`` or just
+    ``"Front"``. Keying on the front face makes owned-matching agree either way.
+    """
+    return name.split("//", 1)[0].strip().casefold()
+
+
 def _parse_qty(raw: str) -> int:
     """Best-effort int from a CSV cell. Blank/garbage -> 1 (a listed card is owned)."""
     s = (raw or "").strip().replace(",", "")
@@ -59,7 +69,7 @@ class Collection:
 
     # --- queries ---------------------------------------------------------
     def quantity(self, name: str) -> int:
-        return self.counts.get(name.casefold(), 0)
+        return self.counts.get(_key(name), 0)
 
     def owns(self, name: str) -> bool:
         return self.quantity(name) > 0
@@ -85,7 +95,7 @@ class Collection:
         name = name.strip()
         if not name:
             return
-        key = name.casefold()
+        key = _key(name)
         self.counts[key] = self.counts.get(key, 0) + quantity
         self.display.setdefault(key, name)
 

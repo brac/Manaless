@@ -171,3 +171,30 @@ def test_owned_cards_flagged_in_builder(client, owned):
     r = _build(client)
     assert "✓ owned" in r.text
     assert "You own" in r.text and "1</strong> of 2" in r.text
+
+
+# --- step 6: deck-diff buy ----------------------------------------------
+
+def test_buy_missing_lists_unowned_and_links_to_tcgplayer(client, owned):
+    owned.add("Sol Ring", 1)  # own one of the two mainboard cards
+    _build(client)
+    r = client.get("/build/buy-missing")
+    assert r.status_code == 200
+    assert "Counterspell" in r.text          # unowned -> listed
+    assert "Sol Ring" not in r.text          # owned -> excluded
+    assert "tcgplayer.com/massentry" in r.text  # buy-all link present
+
+
+def test_buy_missing_when_owning_whole_deck(client, owned):
+    for name in ("Atraxa, Praetors' Voice", "Sol Ring", "Counterspell"):
+        owned.add(name, 1)
+    _build(client)
+    r = client.get("/build/buy-missing")
+    assert "own the whole deck" in r.text.lower()
+    assert "tcgplayer.com/massentry" not in r.text  # no link when nothing to buy
+
+
+def test_buy_missing_without_session_redirects_home(client):
+    client.cookies.clear()
+    r = client.get("/build/buy-missing", follow_redirects=False)
+    assert r.status_code == 303

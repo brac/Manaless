@@ -2,7 +2,7 @@
 
 > **Read this first, then [`CLAUDE.md`](CLAUDE.md) (the bible).** This file is the
 > live "where we are" for a fresh agent picking up the work. Last updated after
-> **build step 4** (substitution + `.dck` export) core landed.
+> **build step 4 fully landed**, including the FastAPI + HTMX web UI.
 
 ## TL;DR — current position
 
@@ -20,33 +20,41 @@
   custom fast-mana/interaction layer for modified decks. **Precon calibration
   passes: 16/17 sampled precons read bracket 2, one upgraded precon at 3** — the
   "cluster at 2, tail into 3" the spec predicted. `python -m manaless.bracket <commander>`.
-- **Build step 4 (substitution + `.dck` export): CORE COMPLETE and live-validated.**
-  `dck_export.to_dck/write_dck` emits XMage `.dck` (commander in `SB:`, DFC front
-  face, placeholder `[XXX:0]` printing — XMage's importer requires the bracket and
-  falls back to name lookup). Headless substitution lives on `DeckModel`
-  (`.remove/.add/.substitute`, all pure → new model, provenance cleared) +
-  `deck_builder.substitute_card` (enrich-and-swap). **A user-facing UI is NOT
-  built** — that's a deliberate open decision (web vs TUI), see "What to do next".
-  `python -m manaless.dck_export <commander> [-o DIR]`.
-- **Build steps 5–6: NOT STARTED** (buy stubs in place, tagged with their step).
-- **Tests: 108 passing**, no live network in the suite (httpx MockTransport).
+- **Build step 4 (substitution + `.dck` export): COMPLETE and live-validated, incl.
+  the web UI.** `dck_export.to_dck/write_dck` emits XMage `.dck` (commander in `SB:`,
+  DFC front face, placeholder `[XXX:0]` printing — XMage's importer requires the
+  bracket and falls back to name lookup). Headless substitution on `DeckModel`
+  (`.remove/.add/.substitute`, pure → new model, provenance cleared) +
+  `deck_builder.substitute_card`/`add_card` (enrich-and-swap). **The UI is a
+  FastAPI + HTMX + Jinja web app** (`manaless.web`): commander search → EDHREC deck
+  picker → builder with **live** win-condition + bracket panels, free-text swap,
+  one-click "Add 1" additions, card images, `.dck` download. Full funnel live-tested
+  (Atraxa: bracket 3, combo; swap recomputes; 100-line `.dck`).
+  `python -m manaless.web` → http://127.0.0.1:8000.
+- **Build steps 5–6 (buy): NOT STARTED** (buy stubs in place, tagged with their step).
+- **Tests: 125 passing**, no live network in the suite (httpx MockTransport / fakes;
+  web routes via FastAPI `TestClient` with deps overridden).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
 ## Run it
 
 > **Environment is now native Windows** (this machine, `C:\Users\Ben Bracamonte\Work\Manaless`).
-> System python is **3.12.10**; a project **`.venv`** holds `httpx` + `pytest`.
-> (The prior WSL/Debian-3.14 bootstrap notes are retired.) Recreate if missing:
+> System python is **3.12.10**; a project **`.venv`** holds the deps. (The prior
+> WSL/Debian-3.14 bootstrap notes are retired.) Recreate if missing:
 > ```powershell
 > python -m venv .venv
 > .\.venv\Scripts\python.exe -m pip install "httpx>=0.27" "pytest>=8.0"
+> .\.venv\Scripts\python.exe -m pip install "fastapi>=0.110" "uvicorn[standard]>=0.29" "jinja2>=3.1" "python-multipart>=0.0.9"   # the `web` extra
 > ```
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                 # 108 tests, ~1s (pytest sets pythonpath=src)
+.\.venv\Scripts\python.exe -m pytest                 # 125 tests, ~3s (pytest sets pythonpath=src)
 
-# Module CLIs need PYTHONPATH=src (package isn't pip install -e'd):
+# The web UI (step 4) — the main way to drive the funnel:
 $env:PYTHONPATH="src"
+.\.venv\Scripts\python.exe -m manaless.web           # serves http://127.0.0.1:8000  (--reload for dev)
+
+# Module CLIs (headless/batch) also need PYTHONPATH=src:
 .\.venv\Scripts\python.exe -m manaless.deck_builder   "Atraxa, Praetors' Voice"  # step 1: enriched deck
 .\.venv\Scripts\python.exe -m manaless.win_conditions "Atraxa, Praetors' Voice"  # step 2: win readout
 .\.venv\Scripts\python.exe -m manaless.bracket        "Atraxa, Praetors' Voice"  # step 3: bracket (--infer to ignore label)
@@ -73,31 +81,55 @@ Repeat runs are instant (disk cache in `cache/`).
 | `win_conditions.py` | done (step 2) | **`evaluate_win_conditions(deck, combos) -> WinConditions`** — pure merge (combos + grouped `AddOneLine` + alt-win scan + non-combo heuristic); `.to_dict()` = the win-conditions.md object |
 | `bracket.py` | done (step 3) | **`evaluate_bracket(deck, estimate, edhrec_bracket=) -> BracketReadout`** — pure; EDHREC label first, else tag→1–5 + custom layer; calibrated vs precons |
 | `dck_export.py` | done (step 4) | **`to_dck`/`write_dck`/`dck_filename`** + CLI; commander → `SB:`, DFC front face, placeholder `[XXX:0]` printing (importer regex needs the bracket; name fallback resolves). Live-validated on a 100-card Atraxa deck |
+| `web/` package | done (step 4 UI) | **FastAPI + HTMX + Jinja** app. `app.py` (lifespan-scoped sync `HttpClient` on `app.state`, sync handlers in threadpool, `get_http/get_edhrec/get_enrich/get_store` deps for test override), `readout.py` (`compute_readouts` = win-cons + bracket in one cached pass), `session.py` (cookie-keyed in-memory `SessionStore`, per-session lock), `templates/` + `static/` (vendored `htmx.min.js`, hand CSS), `__main__.py`. Reuses every engine; no logic duplicated |
 | `buy.py`, `collection.py` | **stub** (steps 5/6) | build last, on demand |
 
 ## What to do next
 
-**Step 4's remaining piece — the UI — is an open product decision, NOT yet made.**
-The headless substitution + recompute spine is all in place: a swap is just
-`substitute_card(enrich, deck, old, new)` → new `DeckModel` → re-run
-`find_my_combos`/`evaluate_win_conditions` + `estimate_bracket`/`evaluate_bracket`
-on it (both Spellbook calls cache-key on `decklist_hash`, so only the changed list
-re-calls the network). What's missing is the *surface* a human drives. Decide with
-the owner before building:
-- **CLI** (smallest; fits the current module-CLI pattern: `swap OLD NEW`, print the
-  recomputed win/bracket readout + write `.dck`),
-- **TUI** (Textual/curses — interactive card list, live readout panel), or
-- **Web app** (richest — card images via the already-enriched `image_url`, the
-  "Add 1 → completes N combos" picker from step 2; but it's a new stack/dependency).
-The owner's funnel (CLAUDE.md §1) implies an interactive builder, so web or TUI is
-the likely end state — but confirm scope/stack first; don't unilaterally add a
-frontend framework.
+**Steps 1–4 are done, including the web UI.** The funnel works end to end: search a
+commander → pick a real EDHREC deck → substitute with live win-condition + bracket
+feedback → download a `.dck`. Natural next moves, in rough priority:
 
-**Then steps 5–6 — buy.** Build step 5 (single-card → TCGplayer Mass Entry URL)
-the first time a card is actually wanted; step 6 (deck-diff vs `collection.py`)
-only after falling for a paper deck. Both are stubs in `buy.py`/`collection.py`.
-See [buy-pipeline.md](buy-pipeline.md). Do NOT build step 6 speculatively
-(CLAUDE.md §3).
+1. **Play-test the loop in XMage.** Export a `.dck` from the UI, load it in XMage vs
+   AI, confirm cards resolve and the bracket *feels* right. This is the whole point
+   (CLAUDE.md §1) and will surface what the readouts are missing better than any
+   spec.
+2. **Steps 5–6 — buy** (CLAUDE.md §3, on demand only). Step 5 (single-card →
+   TCGplayer Mass Entry URL) the first time a card is actually wanted; step 6
+   (deck-diff vs `collection.py`) only after falling for a paper deck. Stubs in
+   `buy.py`/`collection.py`. See [buy-pipeline.md](buy-pipeline.md). **Do NOT build
+   step 6 speculatively.** When built, wiring a "Buy missing cards" button into the
+   web builder is trivial (it already has the session `DeckModel`).
+3. **UI polish backlog** (only if real use wants it):
+   - **EDHREC synergy "substitution palette"** — the deferred parts-bin (CLAUDE.md
+     §4/§11). Needs a new `edhrec_client` method for the synergy/inclusion endpoint;
+     v1 uses free-text + the step-2 "Add 1" suggestions instead.
+   - **§5 average-deck fallback** (still unbuilt project-wide) — the picker shows a
+     friendly "no decks" message; `build_deck` raises `NoDecksAvailable`.
+   - Card autocomplete on the swap box (Scryfall `cards/autocomplete`), a salt/price
+     band filter on the picker, persisting a build across restarts.
+
+### Web UI notes worth knowing
+- **Sync handlers over one shared sync `HttpClient`.** The pipeline is synchronous
+  and its `RateLimiter` (`threading.Lock`), `DiskCache` (atomic writes) and
+  `httpx.Client` are all thread-safe, so FastAPI runs the `def` (non-async) routes
+  in its threadpool against a single `app.state.http`. No async rewrite. Don't
+  "upgrade" the handlers to `async def` — that would run blocking I/O on the event
+  loop.
+- **State is server-side + ephemeral.** The current build lives in an in-memory
+  `SessionStore` keyed by the `manaless_sid` cookie (no DB, no persistence). Restart
+  = builds lost (fine; the durable artifact is the exported `.dck`).
+- **HTMX update pattern.** Every edit (`/build/substitute|remove|add`) returns
+  `_update.html`: the new `#cardlist` (primary `outerHTML` target) **plus** an
+  `hx-swap-oob` readouts panel and flash banner — one request refreshes all three.
+- **Tests fake the network, run the engines.** `test_web` overrides the
+  `get_http/get_edhrec/get_enrich` deps and monkeypatches `web.readout`'s
+  `find_my_combos`/`estimate_bracket`; the real engines + templates execute. Mirror
+  this for new routes — keep the suite offline.
+- **Packaging caveat:** the wheel build (`[tool.hatch...]`) isn't configured to ship
+  `web/templates` + `web/static` data files. Irrelevant while running from source
+  (`PYTHONPATH=src`), but add `force-include`/artifacts config before ever building
+  a wheel.
 
 ### Step 4 findings worth knowing
 - **XMage's `.dck` importer regex requires the `[set:num]` bracket** — a bare

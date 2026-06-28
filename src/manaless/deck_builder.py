@@ -86,6 +86,22 @@ def substitute_card(
     return deck.substitute(old_name, _to_card(quantity, new_name, meta))
 
 
+def add_card(
+    enrich: Enricher,
+    deck: DeckModel,
+    name: str,
+    *,
+    quantity: int = 1,
+) -> DeckModel:
+    """Add ``name`` to the mainboard, enriching it first (build step 4).
+
+    Symmetric with `substitute_card` — used by the "Add 1 → completes a combo"
+    one-click action. Returns a new `DeckModel` (provenance cleared by `.add`).
+    """
+    meta = enrich([name]).get(name)
+    return deck.add(_to_card(quantity, name, meta))
+
+
 def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> tuple[str, int | None]:
     """Return the most-recent deck id + its EDHREC bracket label (1-5, if present)."""
     table = edhrec.fetch_deck_table(commander)

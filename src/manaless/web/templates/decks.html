@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="back"><a href="/">← search another commander</a></p>
+<h1>Decks for {{ commander }}</h1>
+{% if error %}<p class="warn">{{ error }}</p>{% endif %}
+{% if not rows %}
+  <p class="warn">
+    No indexed EDHREC decks for this commander. The average-deck fallback isn't
+    built yet — try a more popular commander.
+  </p>
+{% else %}
+  <p class="muted">{{ rows|length }} curated deck(s), most recent first.</p>
+  <table class="decks">
+    <thead>
+      <tr><th>Saved</th><th>Price</th><th>Bracket</th><th>Salt</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.savedate or '—' }}</td>
+        <td>{% if row.price %}${{ '%.0f'|format(row.price|float) }}{% else %}—{% endif %}</td>
+        <td>{% if row.bracket %}<span class="badge">{{ row.bracket }}</span>{% else %}—{% endif %}</td>
+        <td>{% if row.salt %}{{ '%.2f'|format(row.salt|float) }}{% else %}—{% endif %}</td>
+        <td>
+          <form method="post" action="/build">
+            <input type="hidden" name="commander" value="{{ commander }}">
+            <input type="hidden" name="deck_id" value="{{ row.urlhash }}">
+            <button type="submit">Build →</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

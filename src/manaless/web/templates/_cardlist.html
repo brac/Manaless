@@ -1,0 +1,31 @@
+{% if deck.unresolved %}
+<p class="warn">Unenriched (Scryfall couldn't resolve): {{ deck.unresolved | join(', ') }}</p>
+{% endif %}
+
+{% for category, cards in deck.categorized().items() %}
+<section class="cat">
+  <h3>{{ category }} <span class="muted">({{ cards | sum(attribute='quantity') }})</span></h3>
+  <div class="grid">
+    {% for card in cards %}
+    <div class="card{% if not card.resolved %} unresolved{% endif %}">
+      {% if card.image_url %}
+        <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
+      {% else %}
+        <div class="noimg">{{ card.name }}</div>
+      {% endif %}
+      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}</div>
+      <div class="cardctl">
+        <form class="swap" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
+              hx-indicator="#global-spinner">
+          <input type="hidden" name="old_name" value="{{ card.name }}">
+          <input type="text" name="new_name" placeholder="swap to…" autocomplete="off">
+        </form>
+        <button class="rm" title="remove" hx-post="/build/remove" hx-target="#cardlist"
+                hx-swap="outerHTML" hx-indicator="#global-spinner"
+                hx-vals='{"name": {{ card.name | tojson }} }'>✕</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}

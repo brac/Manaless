@@ -1,0 +1,53 @@
+{% set b = readouts.bracket %}
+{% set w = readouts.win_conditions %}
+
+<div class="panel bracket">
+  <h2>Bracket</h2>
+  <div class="bracket-num">{% if b.bracket %}{{ b.bracket }}{% else %}—{% endif %}<span>/5</span></div>
+  {% if not b.legal %}<p class="bad">Not legal — banned card present.</p>{% endif %}
+  <p class="muted">
+    source: {{ b.source }}{% if b.tag %} · {{ b.tag }} {{ b.tag_label }} ({{ b.bracket_range }}){% endif %}
+  </p>
+  {% if b.game_changers %}<p><strong>Game Changers:</strong> {{ b.game_changers | join(', ') }}</p>{% endif %}
+  {% if b.fast_mana %}<p><strong>Fast mana:</strong> {{ b.fast_mana | join(', ') }}</p>{% endif %}
+  {% if b.free_interaction %}<p><strong>Free interaction:</strong> {{ b.free_interaction | join(', ') }}</p>{% endif %}
+  <p class="muted">
+    mass land denial {{ b.mass_land_denial }} · extra turns {{ b.extra_turns }} ·
+    fast combo {{ 'yes' if b.fast_combo else 'no' }}{% if b.tutors %} · tutors {{ b.tutors | length }} (off-rubric){% endif %}
+  </p>
+  {% if b.reasons %}<ul class="reasons">{% for r in b.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+</div>
+
+<div class="panel wincon">
+  <h2>Win conditions</h2>
+  <p>Primary route: <strong>{{ w.primary }}</strong></p>
+  {% if w.combo_completeness %}<p class="muted">Closest combo: {{ w.combo_completeness }}</p>{% endif %}
+
+  {% if w.combos %}
+  <h3>Combos present ({{ w.combos | length }})</h3>
+  <ul class="combos">
+    {% for c in w.combos[:8] %}
+    <li>{{ c.cards | join(' + ') }} → {{ c.produces | join(', ') }} <span class="muted">(pop {{ c.popularity }})</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if w.add_one %}
+  <h3>One swap from a wincon</h3>
+  <ul class="addone">
+    {% for a in w.add_one[:8] %}
+    <li>
+      <button class="add" hx-post="/build/add" hx-target="#cardlist" hx-swap="outerHTML"
+              hx-indicator="#global-spinner" hx-vals='{"name": {{ a.add | tojson }} }'>+ {{ a.add }}</button>
+      <span class="muted">completes {{ a.completes }} line(s) → {{ a.produces[:3] | join(', ') }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if w.alt_wins %}<p><strong>Alt-wins:</strong> {{ w.alt_wins | join(', ') }}</p>{% endif %}
+  {% if w.fallback_plan %}<p><strong>Fallback plan:</strong> {{ w.fallback_plan }}</p>{% endif %}
+  {% if w.noncombo_profile %}
+  <p class="muted">Profile: {% for lbl, n in w.noncombo_profile %}{{ lbl }}&nbsp;{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+</div>

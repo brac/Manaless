@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>Manaless</h1>
+  <p class="tagline">
+    Try Commander decks before you buy. Pick a commander, browse real EDHREC
+    decklists, substitute freely, and watch the win conditions and bracket update
+    live — then export to XMage and play.
+  </p>
+  <form method="get" action="/decks" class="search">
+    <input type="text" name="commander" autofocus required autocomplete="off"
+           placeholder="Commander name — e.g. Atraxa, Praetors' Voice">
+    <button type="submit">Browse decks →</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div class="cmd">
+    <a href="/" class="back">←</a>
+    <strong>{{ deck.commanders | map(attribute='name') | join(' & ') }}</strong>
+    <span class="muted">{{ deck.total_cards }} cards</span>
+  </div>
+  <div class="actions">
+    <a href="/build/export.dck" class="btn">⬇ Export .dck</a>
+    <form method="post" action="/build/reset" class="inline">
+      <button class="btn ghost">Reset</button>
+    </form>
+  </div>
+</div>
+
+<div id="flash" class="flash">{% if error %}{{ error }}{% endif %}</div>
+
+<div class="layout">
+  <div class="left">
+    <div id="cardlist">{% include "_cardlist.html" %}</div>
+  </div>
+  <aside class="right">
+    <div id="readouts">{% include "_readouts.html" %}</div>
+  </aside>
+</div>
+{% endblock %}

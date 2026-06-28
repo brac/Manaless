@@ -8,7 +8,7 @@ runs headless for batch practice-ladder generation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Primary-type precedence for categorising a card (first match wins). A card with
 # multiple types (e.g. "Artifact Creature", "Land Creature") lands in the more
@@ -86,6 +86,42 @@ class DeckModel:
     def to_decklist(self) -> list[str]:
         """Flat ``["1 Card Name", ...]`` lines (commanders first)."""
         return [f"{card.quantity} {card.name}" for card in self.all_cards()]
+
+    # --- substitution (build step 4) -------------------------------------
+    # All mutators are pure: they return a NEW DeckModel (frozen). Substituting
+    # invalidates the source provenance, so `edhrec_bracket`/`deck_id` are
+    # cleared — bracket/win-conditions must re-infer from the new list. Cards are
+    # matched by case-folded name. Commanders are never touched by these.
+
+    def remove(self, name: str) -> "DeckModel":
+        """Drop the mainboard card matching ``name`` (case-insensitive)."""
+        folded = name.casefold()
+        kept = tuple(c for c in self.cards if c.name.casefold() != folded)
+        if len(kept) == len(self.cards):
+            raise KeyError(f"{name!r} is not in the mainboard")
+        return self._substituted(kept)
+
+    def add(self, card: Card) -> "DeckModel":
+        """Add ``card`` to the mainboard, merging quantities if it's already in."""
+        folded = card.name.casefold()
+        merged, found = [], False
+        for existing in self.cards:
+            if existing.name.casefold() == folded:
+                merged.append(replace(card, quantity=existing.quantity + card.quantity))
+                found = True
+            else:
+                merged.append(existing)
+        if not found:
+            merged.append(card)
+        return self._substituted(tuple(merged))
+
+    def substitute(self, old_name: str, new_card: Card) -> "DeckModel":
+        """Swap ``old_name`` out for ``new_card`` (remove then add)."""
+        return self.remove(old_name).add(new_card)
+
+    def _substituted(self, cards: tuple[Card, ...]) -> "DeckModel":
+        """New model with a changed mainboard; source provenance cleared."""
+        return replace(self, cards=cards, edhrec_bracket=None, deck_id=None)
 
     def categorized(self) -> dict[str, list[Card]]:
         """Mainboard grouped by primary type, in `CATEGORY_ORDER` order.

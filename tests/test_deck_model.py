@@ -66,3 +66,51 @@ def test_unresolved_lists_unenriched_cards():
         cards=(_c("Sol Ring", "Artifact"), _c("Weird Misspelled Card", resolved=False)),
     )
     assert deck.unresolved == ("Weird Misspelled Card",)
+
+
+# --- substitution (build step 4) -----------------------------------------
+
+def _src_deck():
+    return DeckModel(
+        commanders=(_c("Atraxa, Praetors' Voice", "Legendary Creature"),),
+        cards=(_c("Sol Ring", "Artifact"), _c("Counterspell", "Instant")),
+        deck_id="abc",
+        edhrec_bracket=3,
+    )
+
+
+def test_substitute_swaps_card_and_clears_provenance():
+    deck = _src_deck().substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
+    names = [c.name for c in deck.cards]
+    assert "Sol Ring" not in names and "Arcane Signet" in names
+    # source provenance is stale after an edit -> cleared so engines re-infer
+    assert deck.edhrec_bracket is None
+    assert deck.deck_id is None
+
+
+def test_substitute_is_case_insensitive_on_old_name():
+    deck = _src_deck().substitute("sol ring", _c("Arcane Signet", "Artifact"))
+    assert "Arcane Signet" in [c.name for c in deck.cards]
+
+
+def test_remove_unknown_card_raises():
+    with pytest.raises(KeyError):
+        _src_deck().remove("Not In Deck")
+
+
+def test_add_merges_quantity_for_existing_name():
+    deck = _src_deck().add(Card(name="Sol Ring", quantity=1, type_line="Artifact"))
+    sol = [c for c in deck.cards if c.name == "Sol Ring"]
+    assert len(sol) == 1 and sol[0].quantity == 2
+
+
+def test_substitution_returns_new_model_leaving_original_unchanged():
+    original = _src_deck()
+    original.substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
+    assert "Sol Ring" in [c.name for c in original.cards]  # frozen: untouched
+    assert original.edhrec_bracket == 3
+
+
+def test_commanders_untouched_by_substitution():
+    deck = _src_deck().substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
+    assert [c.name for c in deck.commanders] == ["Atraxa, Praetors' Voice"]

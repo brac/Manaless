@@ -2,7 +2,7 @@
 
 > **Read this first, then [`CLAUDE.md`](CLAUDE.md) (the bible).** This file is the
 > live "where we are" for a fresh agent picking up the work. Last updated after
-> **build step 3** landed.
+> **build step 4** (substitution + `.dck` export) core landed.
 
 ## TL;DR — current position
 
@@ -20,33 +20,39 @@
   custom fast-mana/interaction layer for modified decks. **Precon calibration
   passes: 16/17 sampled precons read bracket 2, one upgraded precon at 3** — the
   "cluster at 2, tail into 3" the spec predicted. `python -m manaless.bracket <commander>`.
-- **Build steps 4–6: NOT STARTED** (stubs in place, tagged with their step).
-  `dck_export.py` is the next stub to fill (step 4).
-- **Tests: 94 passing**, no live network in the suite (httpx MockTransport).
+- **Build step 4 (substitution + `.dck` export): CORE COMPLETE and live-validated.**
+  `dck_export.to_dck/write_dck` emits XMage `.dck` (commander in `SB:`, DFC front
+  face, placeholder `[XXX:0]` printing — XMage's importer requires the bracket and
+  falls back to name lookup). Headless substitution lives on `DeckModel`
+  (`.remove/.add/.substitute`, all pure → new model, provenance cleared) +
+  `deck_builder.substitute_card` (enrich-and-swap). **A user-facing UI is NOT
+  built** — that's a deliberate open decision (web vs TUI), see "What to do next".
+  `python -m manaless.dck_export <commander> [-o DIR]`.
+- **Build steps 5–6: NOT STARTED** (buy stubs in place, tagged with their step).
+- **Tests: 108 passing**, no live network in the suite (httpx MockTransport).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
 ## Run it
 
-> **Environment changed since step 1.** This machine's system python is now
-> **3.14**, and it ships **without `venv`/`ensurepip`/`pip`** (Debian PEP-668,
-> "externally managed"). There is no `.venv`. Bootstrap used this session:
-> ```bash
-> curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3 - --user --break-system-packages
-> python3 -m pip install --user --break-system-packages "httpx>=0.27" "pytest>=8.0"
+> **Environment is now native Windows** (this machine, `C:\Users\Ben Bracamonte\Work\Manaless`).
+> System python is **3.12.10**; a project **`.venv`** holds `httpx` + `pytest`.
+> (The prior WSL/Debian-3.14 bootstrap notes are retired.) Recreate if missing:
+> ```powershell
+> python -m venv .venv
+> .\.venv\Scripts\python.exe -m pip install "httpx>=0.27" "pytest>=8.0"
 > ```
-> If you can get `python3.14-venv` (needs apt/sudo), a venv is cleaner. Either way:
 
-```bash
-python3 -m pytest                                              # 82 tests, ~1s
+```powershell
+.\.venv\Scripts\python.exe -m pytest                 # 108 tests, ~1s (pytest sets pythonpath=src)
 
-PYTHONPATH=src python3 -m manaless.spike "Atraxa, Praetors' Voice"          # 0.3 spine proof
-PYTHONPATH=src python3 -m manaless.deck_builder "Atraxa, Praetors' Voice"   # step 1: enriched deck
-PYTHONPATH=src python3 -m manaless.win_conditions "Atraxa, Praetors' Voice" # step 2: win readout
-PYTHONPATH=src python3 -m manaless.bracket "Atraxa, Praetors' Voice"        # step 3: bracket (--infer to ignore label)
+# Module CLIs need PYTHONPATH=src (package isn't pip install -e'd):
+$env:PYTHONPATH="src"
+.\.venv\Scripts\python.exe -m manaless.deck_builder   "Atraxa, Praetors' Voice"  # step 1: enriched deck
+.\.venv\Scripts\python.exe -m manaless.win_conditions "Atraxa, Praetors' Voice"  # step 2: win readout
+.\.venv\Scripts\python.exe -m manaless.bracket        "Atraxa, Praetors' Voice"  # step 3: bracket (--infer to ignore label)
+.\.venv\Scripts\python.exe -m manaless.dck_export     "Atraxa, Praetors' Voice"  # step 4: .dck text (-o DIR to write a file)
 ```
 
-(`PYTHONPATH=src` is only needed for the module CLIs when the package isn't
-`pip install -e`'d; pytest already sets `pythonpath=src` via pyproject.)
 Repeat runs are instant (disk cache in `cache/`).
 
 ## What's built (module by module)
@@ -58,42 +64,54 @@ Repeat runs are instant (disk cache in `cache/`).
 | `http/client.py` | done | `get_json`/`get_text`/`_send`; **429 retry honouring Retry-After**; per-request headers; configurable delays |
 | `edhrec_client.py` | done (step 1 spine) | `EdhrecClient`: build-id (auto-refresh on 404), deck table, decklist; `format_commander_name`; `filter_deck_hashes` |
 | `scryfall_client.py` | done (step 1) | `get_card_metadata` (single, cards/named) + **`get_collection`** (batch cards/collection, ≤75/req, DFC front-face match, shares the per-name cache); DFC fallback; `Accept` header |
-| `deck_model.py` | done (step 1) | immutable `Card` + `DeckModel`; `.category`, `.categorized()`, `.to_decklist()`, `.card_names()`, `.unresolved` |
-| `deck_builder.py` | done (step 1/3) | `build_deck(edhrec, enrich, commander, deck_id=)` — BATCH enricher `Callable[[Sequence[str]], Mapping[str, ScryfallCard]]`; now also threads the EDHREC table **`bracket` label** into `DeckModel.edhrec_bracket` |
+| `deck_model.py` | done (step 1/3/4) | immutable `Card` + `DeckModel`; `.category`, `.categorized()`, `.to_decklist()`, `.card_names()`, `.unresolved`; **step 4 substitution: `.remove/.add/.substitute` (pure → new model, provenance cleared)** |
+| `deck_builder.py` | done (step 1/3/4) | `build_deck(edhrec, enrich, commander, deck_id=)` — BATCH enricher `Callable[[Sequence[str]], Mapping[str, ScryfallCard]]`; threads the EDHREC table **`bracket` label** into `DeckModel.edhrec_bracket`; **step 4 `substitute_card(enrich, deck, old, new)` (enrich-and-swap)** |
 | `deck_model.py` | done (step 1/3) | added `DeckModel.edhrec_bracket` (1–5 label for the source deck; goes stale on substitution) |
 | `http/client.py` | done | added **`post_json`** + a `cache` accessor (for clients that key entries themselves) |
 | `spike.py` | done (0.3) | throwaway end-to-end driver |
 | `spellbook_client.py` | done (steps 2/3) | **`find_my_combos(http, deck) -> ComboResults`** + **`estimate_bracket(http, deck) -> BracketEstimate`** (`ClassifiedCard`/`ClassifiedCombo`); both cached by `decklist_hash` |
 | `win_conditions.py` | done (step 2) | **`evaluate_win_conditions(deck, combos) -> WinConditions`** — pure merge (combos + grouped `AddOneLine` + alt-win scan + non-combo heuristic); `.to_dict()` = the win-conditions.md object |
 | `bracket.py` | done (step 3) | **`evaluate_bracket(deck, estimate, edhrec_bracket=) -> BracketReadout`** — pure; EDHREC label first, else tag→1–5 + custom layer; calibrated vs precons |
-| `dck_export.py` | **stub** (step 4) | `.dck` format pinned in prior-art.md |
+| `dck_export.py` | done (step 4) | **`to_dck`/`write_dck`/`dck_filename`** + CLI; commander → `SB:`, DFC front face, placeholder `[XXX:0]` printing (importer regex needs the bracket; name fallback resolves). Live-validated on a 100-card Atraxa deck |
 | `buy.py`, `collection.py` | **stub** (steps 5/6) | build last, on demand |
 
 ## What to do next
 
-**Build step 3 — inferred bracket** (see [bracket-evaluator.md](bracket-evaluator.md)
-and [verified.md §2/§6](verified.md)): fill the `estimate_bracket` stub +
-`bracket.py`.
-- Baseline: `POST backend.commanderspellbook.com/estimate-bracket` (same
-  `DeckRequest` body as `find_my_combos` — reuse `spellbook_client._deck_request`;
-  response is **not** paginated). Returns `bracketTag` (E/C/O/P/S/R/B) + per-card
-  `gameChanger`/`banned`/`extraTurn`/`massLandDenial` flags + classified combos.
-- Map `bracketTag` → 1–5 **ranges/floors** (verified.md §2 table — NOT the stale
-  CLAUDE.md §7 single-number mapping). Mirror Spellbook's `computeBracketInfo`
-  (brackets.ts) rather than re-deriving the rubric.
-- **Prefer EDHREC's own `bracket` (1–5) label** from the deck-table row for an
-  *unmodified* deck (verified.md §6); infer via `estimate-bracket` only for
-  modified/substituted decks. The deck-table row isn't currently threaded into
-  `DeckModel` — `build_deck` will need to carry the row's `bracket`/`salt` through.
-- Custom layer (small, Scryfall): fast-mana + cheap-free-interaction density.
-  **Tutors are OFF-rubric as of 2025-10-21** — keep only as optional heuristic.
-- Calibrate against the precon set (`data/precons/`, gitignored) — precons should
-  score ~2.
+**Step 4's remaining piece — the UI — is an open product decision, NOT yet made.**
+The headless substitution + recompute spine is all in place: a swap is just
+`substitute_card(enrich, deck, old, new)` → new `DeckModel` → re-run
+`find_my_combos`/`evaluate_win_conditions` + `estimate_bracket`/`evaluate_bracket`
+on it (both Spellbook calls cache-key on `decklist_hash`, so only the changed list
+re-calls the network). What's missing is the *surface* a human drives. Decide with
+the owner before building:
+- **CLI** (smallest; fits the current module-CLI pattern: `swap OLD NEW`, print the
+  recomputed win/bracket readout + write `.dck`),
+- **TUI** (Textual/curses — interactive card list, live readout panel), or
+- **Web app** (richest — card images via the already-enriched `image_url`, the
+  "Add 1 → completes N combos" picker from step 2; but it's a new stack/dependency).
+The owner's funnel (CLAUDE.md §1) implies an interactive builder, so web or TUI is
+the likely end state — but confirm scope/stack first; don't unilaterally add a
+frontend framework.
 
-**Then step 4 — substitution UI + `.dck` export.** `win_conditions` already
-recomputes from a `DeckModel` + a fresh `find_my_combos`, so a substitution is
-just: new `DeckModel` → re-fetch combos (cache-keyed by `decklist_hash`, so only
-changed lists re-call) → re-`evaluate_win_conditions`.
+**Then steps 5–6 — buy.** Build step 5 (single-card → TCGplayer Mass Entry URL)
+the first time a card is actually wanted; step 6 (deck-diff vs `collection.py`)
+only after falling for a paper deck. Both are stubs in `buy.py`/`collection.py`.
+See [buy-pipeline.md](buy-pipeline.md). Do NOT build step 6 speculatively
+(CLAUDE.md §3).
+
+### Step 4 findings worth knowing
+- **XMage's `.dck` importer regex requires the `[set:num]` bracket** — a bare
+  `qty name` line is silently dropped. It resolves set/number first, then falls
+  back to `findPreferredCoreExpansionCard(name, set)`, so the placeholder
+  `[XXX:0]` works: no printing resolves → it matches by name. (Verified against
+  `DckDeckImporter` source.)
+- **Commanders live in the sideboard** (`SB:` prefix) — XMage's command-zone
+  convention (mirrors thebear132/MTG-To-XMage). DFC/split cards emit the **front
+  face only** (`name.split("//")[0]`).
+- **Substitution clears `edhrec_bracket` + `deck_id`** on the new model — the
+  source label is stale the moment the list changes, so bracket must re-infer via
+  `estimate-bracket` (don't pass the old EDHREC label to `evaluate_bracket` after
+  an edit).
 
 ### Step 2 findings worth knowing
 - `find-my-combos` is **not actually paginated** in practice: the

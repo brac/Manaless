@@ -2,7 +2,7 @@
 
 import pytest
 
-from manaless.deck_builder import NoDecksAvailable, build_deck
+from manaless.deck_builder import NoDecksAvailable, build_deck, substitute_card
 from manaless.scryfall_client import ScryfallCard
 
 
@@ -83,3 +83,18 @@ def test_unresolved_card_kept_not_dropped():
     assert "Sol Ring" in [c.name for c in deck.cards]
     assert deck.unresolved == ("Sol Ring",)
     assert deck.total_cards == 5
+
+
+def test_substitute_card_enriches_new_card():
+    deck = build_deck(FakeEdhrec(TABLE, DECK), _enricher(), "Atraxa, Praetors' Voice")
+    swapped = substitute_card(_enricher(), deck, "Sol Ring", "Arcane Signet")
+    new = next(c for c in swapped.cards if c.name == "Arcane Signet")
+    assert new.oracle_text == "text of Arcane Signet"  # enrichment applied
+    assert new.resolved is True
+    assert "Sol Ring" not in [c.name for c in swapped.cards]
+
+
+def test_substitute_card_keeps_unresolvable_new_card():
+    deck = build_deck(FakeEdhrec(TABLE, DECK), _enricher(), "Atraxa, Praetors' Voice")
+    swapped = substitute_card(_enricher(missing={"Mystery Card"}), deck, "Sol Ring", "Mystery Card")
+    assert "Mystery Card" in swapped.unresolved

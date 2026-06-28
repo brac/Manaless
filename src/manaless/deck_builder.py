@@ -66,6 +66,26 @@ def build_deck(
     )
 
 
+def substitute_card(
+    enrich: Enricher,
+    deck: DeckModel,
+    old_name: str,
+    new_name: str,
+    *,
+    quantity: int = 1,
+) -> DeckModel:
+    """Swap ``old_name`` out for ``new_name``, enriching the new card (build step 4).
+
+    Returns a NEW `DeckModel` (the source provenance is cleared by `.substitute`,
+    so the caller re-runs `find_my_combos` / `estimate_bracket` on the result for
+    the live win-condition + bracket readout). The new card is enriched through
+    the same injected `enrich` callable as `build_deck`; an unresolvable name is
+    kept as `Card(resolved=False)` rather than rejected.
+    """
+    meta = enrich([new_name]).get(new_name)
+    return deck.substitute(old_name, _to_card(quantity, new_name, meta))
+
+
 def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> tuple[str, int | None]:
     """Return the most-recent deck id + its EDHREC bracket label (1-5, if present)."""
     table = edhrec.fetch_deck_table(commander)

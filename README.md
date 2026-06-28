@@ -17,9 +17,22 @@ you fell for.
 
 - [x] 0.1 Project scaffold + module map (`src/manaless/`)
 - [x] 0.2 Shared HTTP layer: per-host rate limiter + disk cache + JSON client
-- [ ] 0.3 Fragile-point spike: live EDHREC build-id → deck-table → decklist
-- [ ] 0.4 §12 verification sweep → `docs/verified.md`
+- [x] 0.3 Fragile-point spike: live EDHREC build-id → deck-table → decklist
+- [x] 0.4 §12 verification sweep → [`docs/verified.md`](docs/verified.md)
 - [ ] 0.5 Prior-art acquisition + precon calibration dataset
+
+Run the spike (proves the spine against current live EDHREC):
+
+```bash
+python -m manaless.spike "Atraxa, Praetors' Voice"
+```
+
+**Phase 0.4 closed the CLAUDE.md §12 checklist** — all six items verified against
+live sources on 2026-06-27; see [`docs/verified.md`](docs/verified.md). Highlights
+that change the build: EDHREC deck rows already carry a `bracket` (1–5) label so
+inference is a fallback, not the primary; the Spellbook `bracketTag`→bracket map is
+ranges (corrects §7); Game Changers (53) are pulled live via Scryfall
+`is:gamechanger` into [`data/game-changers.json`](data/game-changers.json).
 
 Build steps 1–6 (the spine, win conditions, bracket, substitution UI, buy) are
 **not** started — see CLAUDE.md §3 build order.
@@ -32,7 +45,8 @@ src/manaless/
     rate_limiter.py  #   per-host minimum delay (EDHREC 0.80s, Scryfall 0.12s)
     cache.py         #   JSON disk cache (slug / deck-id / card-name / list-hash)
     client.py        #   HttpClient.get_json — rate-limit + cache + User-Agent
-  edhrec_client.py   # build step 1 (spine) — stubs; build-id wired in 0.3
+  edhrec_client.py   # build step 1 (spine) — EdhrecClient: build-id + deck fetch
+  spike.py           # 0.3 end-to-end driver: python -m manaless.spike "<cmdr>"
   scryfall_client.py # build step 1
   spellbook_client.py# build steps 2 / 3
   win_conditions.py  # build step 2

@@ -2,33 +2,46 @@
 
 > **Read this first, then [`CLAUDE.md`](CLAUDE.md) (the bible).** This file is the
 > live "where we are" for a fresh agent picking up the work. Last updated after
-> **build step 1** landed.
+> **build step 2** landed (+ the Scryfall batch optimization).
 
 ## TL;DR — current position
 
 - **Phase 0 (groundwork): COMPLETE** — scaffold, shared HTTP layer, EDHREC spine
   spike, §12 verification sweep, prior-art + precon dataset.
 - **Build step 1 (deck-fetch + enrich pipeline): COMPLETE and live-validated.**
-  `build_deck(commander) -> DeckModel` works against live EDHREC + Scryfall;
-  type categorization matches EDHREC's own per-type counts exactly.
-- **Build steps 2–6: NOT STARTED** (stubs in place, tagged with their step).
-- **Tests: 63 passing**, no live network in the suite (httpx MockTransport).
+  `build_deck(commander) -> DeckModel` works against live EDHREC + Scryfall.
+  **The ~3 min cold-build wart is FIXED**: enrichment now batches through
+  Scryfall `cards/collection` (≤75/req) — a cold Atraxa build is **~6s**, warm <1s.
+- **Build step 2 (win conditions): COMPLETE and live-validated.** Three-source
+  merge: Spellbook combos + grouped "Add 1" lines, local alt-win scan, the
+  non-combo oracle heuristic. `python -m manaless.win_conditions <commander>`.
+- **Build steps 3–6: NOT STARTED** (stubs in place, tagged with their step).
+  `estimate_bracket` is the next stub to fill (step 3).
+- **Tests: 82 passing**, no live network in the suite (httpx MockTransport).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
 ## Run it
 
-```bash
-# Python 3.12 required (system python here is 3.9 — use python3.12 for the venv)
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-pytest                                              # 63 tests, ~1s
+> **Environment changed since step 1.** This machine's system python is now
+> **3.14**, and it ships **without `venv`/`ensurepip`/`pip`** (Debian PEP-668,
+> "externally managed"). There is no `.venv`. Bootstrap used this session:
+> ```bash
+> curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3 - --user --break-system-packages
+> python3 -m pip install --user --break-system-packages "httpx>=0.27" "pytest>=8.0"
+> ```
+> If you can get `python3.14-venv` (needs apt/sudo), a venv is cleaner. Either way:
 
-python -m manaless.spike "Atraxa, Praetors' Voice"          # 0.3 spine proof
-python -m manaless.deck_builder "Atraxa, Praetors' Voice"   # step 1: enriched deck
+```bash
+python3 -m pytest                                              # 82 tests, ~1s
+
+PYTHONPATH=src python3 -m manaless.spike "Atraxa, Praetors' Voice"          # 0.3 spine proof
+PYTHONPATH=src python3 -m manaless.deck_builder "Atraxa, Praetors' Voice"   # step 1: enriched deck
+PYTHONPATH=src python3 -m manaless.win_conditions "Atraxa, Praetors' Voice" # step 2: win readout
 ```
 
-First `deck_builder` run on a new commander is **slow (~3 min)** — see the
-Scryfall gotcha below. Repeat runs are instant (disk cache in `cache/`).
+(`PYTHONPATH=src` is only needed for the module CLIs when the package isn't
+`pip install -e`'d; pytest already sets `pythonpath=src` via pyproject.)
+Repeat runs are instant (disk cache in `cache/`).
 
 ## What's built (module by module)
 
@@ -38,40 +51,54 @@ Scryfall gotcha below. Repeat runs are instant (disk cache in `cache/`).
 | `http/cache.py` | done | JSON disk cache, TTL, atomic writes, DFC-safe keys |
 | `http/client.py` | done | `get_json`/`get_text`/`_send`; **429 retry honouring Retry-After**; per-request headers; configurable delays |
 | `edhrec_client.py` | done (step 1 spine) | `EdhrecClient`: build-id (auto-refresh on 404), deck table, decklist; `format_commander_name`; `filter_deck_hashes` |
-| `scryfall_client.py` | done (step 1) | `get_card_metadata`: cards/named, DFC fallback to `card_faces[0]`, cached by name, `Accept` header |
+| `scryfall_client.py` | done (step 1) | `get_card_metadata` (single, cards/named) + **`get_collection`** (batch cards/collection, ≤75/req, DFC front-face match, shares the per-name cache); DFC fallback; `Accept` header |
 | `deck_model.py` | done (step 1) | immutable `Card` + `DeckModel`; `.category`, `.categorized()`, `.to_decklist()`, `.card_names()`, `.unresolved` |
-| `deck_builder.py` | done (step 1) | `build_deck(edhrec, enrich, commander, deck_id=)`; commander split; `NoDecksAvailable`; unresolved cards surfaced not dropped |
+| `deck_builder.py` | done (step 1) | `build_deck(edhrec, enrich, commander, deck_id=)` — **`enrich` is now a BATCH enricher** `Callable[[Sequence[str]], Mapping[str, ScryfallCard]]` (absent name = unresolved, kept not dropped) |
+| `http/client.py` | done | added **`post_json`** + a `cache` accessor (for clients that key entries themselves) |
 | `spike.py` | done (0.3) | throwaway end-to-end driver |
-| `spellbook_client.py` | **stub** (steps 2/3) | schemas already verified — see verified.md §1–2 |
-| `win_conditions.py` | **stub** (step 2) | |
+| `spellbook_client.py` | done (step 2) | **`find_my_combos(http, deck) -> ComboResults`** (`Combo`/`ComboResults`; cached by `decklist_hash`); `estimate_bracket` still **stub** (step 3) |
+| `win_conditions.py` | done (step 2) | **`evaluate_win_conditions(deck, combos) -> WinConditions`** — pure merge (combos + grouped `AddOneLine` + alt-win scan + non-combo heuristic); `.to_dict()` = the win-conditions.md object |
 | `bracket.py` | **stub** (step 3) | |
 | `dck_export.py` | **stub** (step 4) | `.dck` format pinned in prior-art.md |
 | `buy.py`, `collection.py` | **stub** (steps 5/6) | build last, on demand |
 
 ## What to do next
 
-**Immediate recommended follow-up (a known wart, not yet done):**
-Switch deck enrichment from per-card `cards/named` to **`POST https://api.scryfall.com/cards/collection`**
-(≤75 identifiers/request → ~2 calls per deck instead of ~100). Scryfall throttles
-per-card hammering — that is why cold builds take ~3 min. Plan:
-- Add `post_json` is already feasible via `HttpClient._send("POST", ...)` — add a
-  thin `HttpClient.post_json(url, json_body, headers=)` wrapper.
-- Add `scryfall_client.get_collection(http, names) -> (by_name, not_found)`:
-  read the per-name disk cache first, batch only the misses, cache each result.
-  **Gotcha:** the collection endpoint returns cards whose `name` may differ from
-  the requested name (DFCs return `"Front // Back"`), and order is not guaranteed
-  alongside `not_found` — match requested→returned carefully (front-face compare).
-- Point `deck_builder._enrich_unique` at `get_collection`; keep `get_card_metadata`
-  for single-card substitution lookups (step 4).
+**Build step 3 — inferred bracket** (see [bracket-evaluator.md](bracket-evaluator.md)
+and [verified.md §2/§6](verified.md)): fill the `estimate_bracket` stub +
+`bracket.py`.
+- Baseline: `POST backend.commanderspellbook.com/estimate-bracket` (same
+  `DeckRequest` body as `find_my_combos` — reuse `spellbook_client._deck_request`;
+  response is **not** paginated). Returns `bracketTag` (E/C/O/P/S/R/B) + per-card
+  `gameChanger`/`banned`/`extraTurn`/`massLandDenial` flags + classified combos.
+- Map `bracketTag` → 1–5 **ranges/floors** (verified.md §2 table — NOT the stale
+  CLAUDE.md §7 single-number mapping). Mirror Spellbook's `computeBracketInfo`
+  (brackets.ts) rather than re-deriving the rubric.
+- **Prefer EDHREC's own `bracket` (1–5) label** from the deck-table row for an
+  *unmodified* deck (verified.md §6); infer via `estimate-bracket` only for
+  modified/substituted decks. The deck-table row isn't currently threaded into
+  `DeckModel` — `build_deck` will need to carry the row's `bracket`/`salt` through.
+- Custom layer (small, Scryfall): fast-mana + cheap-free-interaction density.
+  **Tutors are OFF-rubric as of 2025-10-21** — keep only as optional heuristic.
+- Calibrate against the precon set (`data/precons/`, gitignored) — precons should
+  score ~2.
 
-**Then build step 2 — win conditions** (see [win-conditions.md](win-conditions.md)
-and [verified.md §1](verified.md)): three-source merge.
-- Combos: `POST backend.commanderspellbook.com/find-my-combos` (paginated; read
-  `results`). The "Add 1" pool = `results.almostIncluded` **filtered to variants
-  missing exactly one card** vs the current deck.
-- Alt-wins: Scryfall `oracle:"win the game"` scan.
-- Non-combo plan: the ~50-line oracle heuristic over the enriched `DeckModel`
-  (this is one of only two genuinely-custom pieces — see CLAUDE.md §2).
+**Then step 4 — substitution UI + `.dck` export.** `win_conditions` already
+recomputes from a `DeckModel` + a fresh `find_my_combos`, so a substitution is
+just: new `DeckModel` → re-fetch combos (cache-keyed by `decklist_hash`, so only
+changed lists re-call) → re-`evaluate_win_conditions`.
+
+### Step 2 findings worth knowing
+- `find-my-combos` is **not actually paginated** in practice: the
+  `{count,next,previous,results}` wrapper comes back with null next/previous;
+  read `results` directly (confirmed live on a 100-card Atraxa list).
+- For a *complete* deck, `results.almostIncluded` came back **entirely
+  one-card-away** (107/107 for Atraxa). The engine still filters to exactly-one
+  missing (robust if that ever changes) and then **groups by the card to add**,
+  ranked by lines-completed then popularity — so the UI shows "add X → completes
+  N lines", not 107 noisy rows.
+- The **alt-win scan is local** (substring `"win the game"` over already-enriched
+  oracle text) — no extra Scryfall `oracle:` query needed, one fewer API dep.
 
 ## Critical knowledge (do not relearn the hard way)
 

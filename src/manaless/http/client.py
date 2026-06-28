@@ -41,6 +41,8 @@ class HttpClient:
         user_agent: str = DEFAULT_USER_AGENT,
         timeout: float = _DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
+        host_delays: dict[str, float] | None = None,
+        default_delay: float = _DEFAULT_DELAY,
     ) -> None:
         self._cache = cache
         self._client = client or httpx.Client(
@@ -48,10 +50,9 @@ class HttpClient:
             timeout=timeout,
             follow_redirects=True,
         )
-        self._limiters = {
-            host: RateLimiter(delay) for host, delay in HOST_DELAYS.items()
-        }
-        self._default_limiter = RateLimiter(_DEFAULT_DELAY)
+        delays = HOST_DELAYS if host_delays is None else host_delays
+        self._limiters = {host: RateLimiter(delay) for host, delay in delays.items()}
+        self._default_limiter = RateLimiter(default_delay)
 
     def get_json(
         self,

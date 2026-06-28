@@ -81,6 +81,22 @@ def test_gives_up_after_max_429_retries(tmp_path):
         client.get_json("https://api.scryfall.com/x")
 
 
+def test_post_json_sends_body_and_parses_response(tmp_path):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content
+        seen["method"] = request.method
+        return httpx.Response(200, json={"data": []})
+
+    client = _client(tmp_path, handler)
+    result = client.post_json("https://api.scryfall.com/cards/collection", {"identifiers": []})
+
+    assert seen["method"] == "POST"
+    assert b"identifiers" in seen["body"]
+    assert result == {"data": []}
+
+
 def test_known_hosts_get_their_configured_limiter(tmp_path):
     client = _client(tmp_path, lambda r: httpx.Response(200, json={}))
 

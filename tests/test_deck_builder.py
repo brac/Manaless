@@ -3,7 +3,7 @@
 import pytest
 
 from manaless.deck_builder import NoDecksAvailable, build_deck
-from manaless.scryfall_client import ScryfallCard, ScryfallCardNotFound
+from manaless.scryfall_client import ScryfallCard
 
 
 class FakeEdhrec:
@@ -28,11 +28,16 @@ def _meta(name, type_line="Artifact"):
 
 
 def _enricher(missing=()):
-    def enrich(name):
-        if name in missing:
-            raise ScryfallCardNotFound(name)
-        tl = "Legendary Creature" if "Atraxa" in name else "Artifact"
-        return _meta(name, tl)
+    # Batch enricher: returns metadata only for names that resolve; a missing
+    # name is simply absent from the mapping (treated as unresolved downstream).
+    def enrich(names):
+        out = {}
+        for name in names:
+            if name in missing:
+                continue
+            tl = "Legendary Creature" if "Atraxa" in name else "Artifact"
+            out[name] = _meta(name, tl)
+        return out
     return enrich
 
 

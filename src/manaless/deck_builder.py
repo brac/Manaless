@@ -12,13 +12,15 @@ testable headless and the real Scryfall client is just one binding of it.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 
 from manaless.deck_model import Card, DeckModel
 from manaless.edhrec_client import EdhrecClient, filter_deck_hashes
-from manaless.scryfall_client import ScryfallCard, ScryfallCardNotFound, get_card_metadata
+from manaless.scryfall_client import ScryfallCard, get_collection
 
-Enricher = Callable[[str], ScryfallCard]
+# Enrich a batch of card names at once. Returns metadata only for names that
+# resolved; an absent name is treated as unresolved (kept, flagged — not dropped).
+Enricher = Callable[[Sequence[str]], Mapping[str, ScryfallCard]]
 
 _LINE = re.compile(r"^(\d+)\s+(.*)$")
 
@@ -44,13 +46,14 @@ def build_deck(
         deck_id = _pick_most_recent(edhrec, commander)
 
     entries = [_parse_line(line) for line in edhrec.fetch_deck(deck_id)]
-    metadata = _enrich_unique(enrich, entries)
+    names = list(dict.fromkeys(name for _, name in entries))
+    metadata = enrich(names)
 
     commander_key = commander.casefold()
     commanders: list[Card] = []
     mainboard: list[Card] = []
     for quantity, name in entries:
-        card = _to_card(quantity, name, metadata[name])
+        card = _to_card(quantity, name, metadata.get(name))
         target = commanders if name.casefold() == commander_key else mainboard
         target.append(card)
 
@@ -79,18 +82,6 @@ def _parse_line(line: str) -> tuple[int, str]:
     return (int(match.group(1)), match.group(2).strip())
 
 
-def _enrich_unique(enrich: Enricher, entries: list[tuple[int, str]]) -> dict[str, ScryfallCard | None]:
-    metadata: dict[str, ScryfallCard | None] = {}
-    for _, name in entries:
-        if name in metadata:
-            continue
-        try:
-            metadata[name] = enrich(name)
-        except ScryfallCardNotFound:
-            metadata[name] = None
-    return metadata
-
-
 def _to_card(quantity: int, name: str, meta: ScryfallCard | None) -> Card:
     # Keep the EDHREC line name as the card name (front-face, source-faithful);
     # meta supplies enrichment only.
@@ -112,7 +103,6 @@ def _to_card(quantity: int, name: str, meta: ScryfallCard | None) -> Card:
 def main() -> None:
     import argparse
     import sys
-    from functools import partial
 
     from manaless.http.cache import DiskCache
     from manaless.http.client import HttpClient
@@ -124,8 +114,9 @@ def main() -> None:
 
     with HttpClient(DiskCache(CACHE_DIR)) as http:
         edhrec = EdhrecClient(http)
+        enrich = lambda names: get_collection(http, names)[0]  # noqa: E731
         try:
-            deck = build_deck(edhrec, partial(get_card_metadata, http), args.commander)
+            deck = build_deck(edhrec, enrich, args.commander)
         except NoDecksAvailable as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)

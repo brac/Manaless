@@ -9,6 +9,7 @@ near-static.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -18,6 +19,11 @@ from manaless.http.client import HttpClient
 
 CACHE_NAMESPACE = "scryfall-card"
 NAMED_URL = "https://api.scryfall.com/cards/named?exact={query}"
+COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+
+# Scryfall's batch endpoint caps each request at 75 identifiers.
+_COLLECTION_BATCH = 75
+_DFC_NAME_SEP = " // "
 
 # Scryfall asks clients to send an explicit Accept header (and a User-Agent,
 # which HttpClient already sets).
@@ -60,6 +66,58 @@ def get_card_metadata(http: HttpClient, name: str) -> ScryfallCard:
             raise ScryfallCardNotFound(name) from exc
         raise
     return _parse_card(data)
+
+
+def get_collection(
+    http: HttpClient, names: Iterable[str]
+) -> tuple[dict[str, ScryfallCard], list[str]]:
+    """Enrich many cards in one shot via the batch ``cards/collection`` endpoint.
+
+    Returns ``(by_name, not_found)`` keyed by the *requested* name. Per-name disk
+    cache is read first (sharing the ``get_card_metadata`` cache), so only the
+    misses hit the network — in chunks of 75. Cold cost drops from ~1 request per
+    card to ~2 per deck, which is why a fresh build is fast.
+
+    The endpoint returns cards whose ``name`` may differ from the request (a DFC
+    comes back as ``"Front // Back"``) and order is not guaranteed, so each
+    returned card is matched back to its requested name by exact or front-face
+    compare. Unresolved names land in ``not_found``.
+    """
+    by_name: dict[str, ScryfallCard] = {}
+    misses: list[str] = []
+    for name in dict.fromkeys(names):  # de-dupe, preserve order
+        cached = http.cache.get(CACHE_NAMESPACE, name)
+        if cached is not None:
+            by_name[name] = _parse_card(cached)
+        else:
+            misses.append(name)
+
+    not_found: list[str] = []
+    for start in range(0, len(misses), _COLLECTION_BATCH):
+        batch = misses[start : start + _COLLECTION_BATCH]
+        not_found.extend(_fetch_collection_batch(http, batch, by_name))
+    return by_name, not_found
+
+
+def _fetch_collection_batch(
+    http: HttpClient, batch: Sequence[str], by_name: dict[str, ScryfallCard]
+) -> list[str]:
+    """Fetch one ≤75-name batch, populate ``by_name``, return the names not found."""
+    body = {"identifiers": [{"name": name} for name in batch]}
+    data = http.post_json(COLLECTION_URL, body, headers=_ACCEPT)
+
+    wanted = {name.casefold(): name for name in batch}
+    for raw in data.get("data", []):
+        full = raw.get("name", "")
+        front = full.split(_DFC_NAME_SEP, 1)[0]
+        requested = wanted.get(full.casefold()) or wanted.get(front.casefold())
+        if requested is None:
+            continue  # unexpected extra card; ignore rather than mis-key it
+        http.cache.set(CACHE_NAMESPACE, requested, raw)
+        by_name[requested] = _parse_card(raw)
+
+    # Scryfall echoes each unmatched identifier back verbatim ({"name": "..."}).
+    return [nf.get("name", "") for nf in data.get("not_found", [])]
 
 
 def _parse_card(data: dict) -> ScryfallCard:

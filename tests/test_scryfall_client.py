@@ -1,5 +1,7 @@
 """scryfall_client — enrichment parsing (normal, DFC fallback, split), 404, cache."""
 
+import json
+
 import httpx
 import pytest
 
@@ -8,6 +10,7 @@ from manaless.http.client import HttpClient
 from manaless.scryfall_client import (
     ScryfallCardNotFound,
     get_card_metadata,
+    get_collection,
 )
 
 
@@ -81,3 +84,86 @@ def test_result_is_cached_by_name(tmp_path):
     get_card_metadata(http, "Sol Ring")
     get_card_metadata(http, "Sol Ring")
     assert calls["n"] == 1
+
+
+# --- batch cards/collection enrichment ------------------------------------
+
+
+def _collection_handler(by_name, not_found_names=()):
+    """A MockTransport handler that answers a cards/collection POST."""
+
+    def handler(request):
+        identifiers = json.loads(request.content)["identifiers"]
+        requested = [i["name"] for i in identifiers]
+        data = [by_name[n] for n in requested if n in by_name]
+        not_found = [{"name": n} for n in requested if n in not_found_names]
+        return httpx.Response(200, json={"data": data, "not_found": not_found})
+
+    return handler
+
+
+def test_get_collection_batches_and_matches_by_name(tmp_path):
+    http = _http(tmp_path, _collection_handler({"Sol Ring": NORMAL}))
+    by_name, not_found = get_collection(http, ["Sol Ring"])
+    assert not_found == []
+    assert by_name["Sol Ring"].type_line == "Artifact"
+
+
+def test_get_collection_matches_dfc_by_front_face(tmp_path):
+    # Request the front-face name; Scryfall returns "Front // Back".
+    http = _http(tmp_path, _collection_handler({"Jace, Vryn's Prodigy": DFC}))
+    by_name, not_found = get_collection(http, ["Jace, Vryn's Prodigy"])
+    card = by_name["Jace, Vryn's Prodigy"]  # keyed by REQUESTED name, not returned
+    assert card.is_dfc is True
+    assert "FRONT" in card.oracle_text
+
+
+def test_get_collection_reports_not_found(tmp_path):
+    handler = _collection_handler({"Sol Ring": NORMAL}, not_found_names={"Nope"})
+    http = _http(tmp_path, handler)
+    by_name, not_found = get_collection(http, ["Sol Ring", "Nope"])
+    assert "Sol Ring" in by_name
+    assert not_found == ["Nope"]
+
+
+def test_get_collection_reuses_per_name_cache_and_skips_request(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return _collection_handler({"Sol Ring": NORMAL})(request)
+
+    http = _http(tmp_path, handler)
+    get_collection(http, ["Sol Ring"])
+    get_collection(http, ["Sol Ring"])  # served from the per-name cache
+    assert calls["n"] == 1
+
+
+def test_get_collection_cache_is_shared_with_get_card_metadata(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return _collection_handler({"Sol Ring": NORMAL})(request)
+
+    http = _http(tmp_path, handler)
+    get_collection(http, ["Sol Ring"])
+    card = get_card_metadata(http, "Sol Ring")  # no network: batch already cached it
+    assert card.name == "Sol Ring"
+    assert calls["n"] == 1
+
+
+def test_get_collection_chunks_over_75(tmp_path):
+    names = [f"Card {i}" for i in range(80)]
+    catalog = {n: {**NORMAL, "name": n} for n in names}
+    batch_sizes = []
+
+    def handler(request):
+        ids = json.loads(request.content)["identifiers"]
+        batch_sizes.append(len(ids))
+        return _collection_handler(catalog)(request)
+
+    http = _http(tmp_path, handler)
+    by_name, not_found = get_collection(http, names)
+    assert len(by_name) == 80 and not_found == []
+    assert batch_sizes == [75, 5]  # split into 75 + 5, never exceeding the cap

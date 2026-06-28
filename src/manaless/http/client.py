@@ -93,9 +93,35 @@ class HttpClient:
             self._cache.set(cache_namespace, cache_key, data)
         return data
 
+    def post_json(
+        self,
+        url: str,
+        json_body: Any,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """POST a JSON body and parse the JSON response (no HTTP-layer caching).
+
+        Used for Scryfall's batch ``cards/collection`` and the Commander
+        Spellbook POST endpoints, which take a decklist in the body. Callers
+        that want caching key it themselves (per-card for Scryfall, per-decklist
+        hash for Spellbook). Raises ``httpx.HTTPStatusError`` on a non-2xx
+        response (after retrying 429s per ``Retry-After``).
+        """
+        return self._send("POST", url, json=json_body, headers=headers).json()
+
     def get_text(self, url: str) -> str:
         """Fetch raw text (used for the EDHREC build-id homepage scrape)."""
         return self._send("GET", url).text
+
+    @property
+    def cache(self) -> DiskCache:
+        """The shared disk cache, for clients that key entries themselves.
+
+        ``scryfall_client.get_collection`` reads/writes per-card entries here so
+        a batched fetch and a later single ``get_card_metadata`` share one cache.
+        """
+        return self._cache
 
     def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         """Rate-limited request with bounded 429 retry honouring ``Retry-After``."""

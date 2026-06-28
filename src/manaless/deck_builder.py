@@ -42,8 +42,9 @@ def build_deck(
     Scryfall can't resolve becomes an unenriched `Card(resolved=False)` rather
     than dropping out — inspect `DeckModel.unresolved`.
     """
+    edhrec_bracket: int | None = None
     if deck_id is None:
-        deck_id = _pick_most_recent(edhrec, commander)
+        deck_id, edhrec_bracket = _pick_most_recent(edhrec, commander)
 
     entries = [_parse_line(line) for line in edhrec.fetch_deck(deck_id)]
     names = list(dict.fromkeys(name for _, name in entries))
@@ -61,10 +62,12 @@ def build_deck(
         commanders=tuple(commanders),
         cards=tuple(mainboard),
         deck_id=deck_id,
+        edhrec_bracket=edhrec_bracket,
     )
 
 
-def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> str:
+def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> tuple[str, int | None]:
+    """Return the most-recent deck id + its EDHREC bracket label (1-5, if present)."""
     table = edhrec.fetch_deck_table(commander)
     hashes = filter_deck_hashes(table)
     if not hashes:
@@ -72,7 +75,10 @@ def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> str:
             f"No indexed EDHREC decks for {commander!r}; "
             "the §5 average-deck fallback is not built yet."
         )
-    return hashes[0]
+    deck_id = hashes[0]
+    row = next((r for r in table if r.get("urlhash") == deck_id), {})
+    bracket = row.get("bracket")
+    return deck_id, int(bracket) if isinstance(bracket, (int, float)) else None
 
 
 def _parse_line(line: str) -> tuple[int, str]:

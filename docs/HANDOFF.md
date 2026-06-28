@@ -2,7 +2,7 @@
 
 > **Read this first, then [`CLAUDE.md`](CLAUDE.md) (the bible).** This file is the
 > live "where we are" for a fresh agent picking up the work. Last updated after
-> **build step 2** landed (+ the Scryfall batch optimization).
+> **build step 3** landed.
 
 ## TL;DR — current position
 
@@ -15,9 +15,14 @@
 - **Build step 2 (win conditions): COMPLETE and live-validated.** Three-source
   merge: Spellbook combos + grouped "Add 1" lines, local alt-win scan, the
   non-combo oracle heuristic. `python -m manaless.win_conditions <commander>`.
-- **Build steps 3–6: NOT STARTED** (stubs in place, tagged with their step).
-  `estimate_bracket` is the next stub to fill (step 3).
-- **Tests: 82 passing**, no live network in the suite (httpx MockTransport).
+- **Build step 3 (inferred bracket): COMPLETE and calibration-validated.**
+  EDHREC label for unmodified decks; Spellbook `estimate-bracket` tag→1–5 +
+  custom fast-mana/interaction layer for modified decks. **Precon calibration
+  passes: 16/17 sampled precons read bracket 2, one upgraded precon at 3** — the
+  "cluster at 2, tail into 3" the spec predicted. `python -m manaless.bracket <commander>`.
+- **Build steps 4–6: NOT STARTED** (stubs in place, tagged with their step).
+  `dck_export.py` is the next stub to fill (step 4).
+- **Tests: 94 passing**, no live network in the suite (httpx MockTransport).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
 ## Run it
@@ -37,6 +42,7 @@ python3 -m pytest                                              # 82 tests, ~1s
 PYTHONPATH=src python3 -m manaless.spike "Atraxa, Praetors' Voice"          # 0.3 spine proof
 PYTHONPATH=src python3 -m manaless.deck_builder "Atraxa, Praetors' Voice"   # step 1: enriched deck
 PYTHONPATH=src python3 -m manaless.win_conditions "Atraxa, Praetors' Voice" # step 2: win readout
+PYTHONPATH=src python3 -m manaless.bracket "Atraxa, Praetors' Voice"        # step 3: bracket (--infer to ignore label)
 ```
 
 (`PYTHONPATH=src` is only needed for the module CLIs when the package isn't
@@ -53,12 +59,13 @@ Repeat runs are instant (disk cache in `cache/`).
 | `edhrec_client.py` | done (step 1 spine) | `EdhrecClient`: build-id (auto-refresh on 404), deck table, decklist; `format_commander_name`; `filter_deck_hashes` |
 | `scryfall_client.py` | done (step 1) | `get_card_metadata` (single, cards/named) + **`get_collection`** (batch cards/collection, ≤75/req, DFC front-face match, shares the per-name cache); DFC fallback; `Accept` header |
 | `deck_model.py` | done (step 1) | immutable `Card` + `DeckModel`; `.category`, `.categorized()`, `.to_decklist()`, `.card_names()`, `.unresolved` |
-| `deck_builder.py` | done (step 1) | `build_deck(edhrec, enrich, commander, deck_id=)` — **`enrich` is now a BATCH enricher** `Callable[[Sequence[str]], Mapping[str, ScryfallCard]]` (absent name = unresolved, kept not dropped) |
+| `deck_builder.py` | done (step 1/3) | `build_deck(edhrec, enrich, commander, deck_id=)` — BATCH enricher `Callable[[Sequence[str]], Mapping[str, ScryfallCard]]`; now also threads the EDHREC table **`bracket` label** into `DeckModel.edhrec_bracket` |
+| `deck_model.py` | done (step 1/3) | added `DeckModel.edhrec_bracket` (1–5 label for the source deck; goes stale on substitution) |
 | `http/client.py` | done | added **`post_json`** + a `cache` accessor (for clients that key entries themselves) |
 | `spike.py` | done (0.3) | throwaway end-to-end driver |
-| `spellbook_client.py` | done (step 2) | **`find_my_combos(http, deck) -> ComboResults`** (`Combo`/`ComboResults`; cached by `decklist_hash`); `estimate_bracket` still **stub** (step 3) |
+| `spellbook_client.py` | done (steps 2/3) | **`find_my_combos(http, deck) -> ComboResults`** + **`estimate_bracket(http, deck) -> BracketEstimate`** (`ClassifiedCard`/`ClassifiedCombo`); both cached by `decklist_hash` |
 | `win_conditions.py` | done (step 2) | **`evaluate_win_conditions(deck, combos) -> WinConditions`** — pure merge (combos + grouped `AddOneLine` + alt-win scan + non-combo heuristic); `.to_dict()` = the win-conditions.md object |
-| `bracket.py` | **stub** (step 3) | |
+| `bracket.py` | done (step 3) | **`evaluate_bracket(deck, estimate, edhrec_bracket=) -> BracketReadout`** — pure; EDHREC label first, else tag→1–5 + custom layer; calibrated vs precons |
 | `dck_export.py` | **stub** (step 4) | `.dck` format pinned in prior-art.md |
 | `buy.py`, `collection.py` | **stub** (steps 5/6) | build last, on demand |
 

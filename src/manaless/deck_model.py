@@ -63,6 +63,10 @@ class DeckModel:
     cards: tuple[Card, ...]
     deck_id: str | None = None
     source_url: str | None = None
+    # EDHREC's own power label (1-5) for the *source* deck, when picked from the
+    # deck table. Prefer it for an unmodified deck; it goes stale once the user
+    # substitutes (build step 3 re-infers via estimate-bracket). See verified.md §6.
+    edhrec_bracket: int | None = None
 
     def all_cards(self) -> tuple[Card, ...]:
         return self.commanders + self.cards

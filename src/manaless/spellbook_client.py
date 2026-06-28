@@ -24,6 +24,7 @@ BASE_URL = "https://backend.commanderspellbook.com"
 FIND_MY_COMBOS_URL = f"{BASE_URL}/find-my-combos"
 ESTIMATE_BRACKET_URL = f"{BASE_URL}/estimate-bracket"
 CACHE_NAMESPACE = "spellbook-combos"
+BRACKET_CACHE_NAMESPACE = "spellbook-bracket"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,81 @@ def _parse_combo(variant: dict) -> Combo:
     )
 
 
-def estimate_bracket(http: HttpClient, deck: DeckModel) -> dict:
-    """POST decklist -> bracket-relevant info (buckets to map to 1-5). Build step 3."""
-    raise NotImplementedError("build step 3 — bracket")
+@dataclass(frozen=True, slots=True)
+class ClassifiedCard:
+    """A bracket-relevant card flagged by ``estimate-bracket`` against the rubric."""
+
+    name: str
+    game_changer: bool
+    banned: bool
+    mass_land_denial: bool
+    extra_turn: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ClassifiedCombo:
+    """A combo classified by ``estimate-bracket`` (the bracket rubric's combo axis)."""
+
+    relevant: bool
+    arguably_two_card: bool
+    definitely_two_card: bool
+    speed: int
+    lock: bool
+    extra_turn: bool
+    mass_land_denial: bool
+    skip_turns: bool
+    control_all_opponents: bool
+    control_some_opponents: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BracketEstimate:
+    """Parsed ``estimate-bracket`` result: the headline tag + classified pieces.
+
+    ``tag`` is one of E/C/O/P/S/R/B (Exhibition..Ruthless, or B = a banned card is
+    present so the deck is not legal in any bracket). The flags on ``cards`` /
+    ``combos`` are the official-rubric inputs (see docs/verified.md §2).
+    """
+
+    tag: str
+    cards: tuple[ClassifiedCard, ...]
+    combos: tuple[ClassifiedCombo, ...]
+
+
+def estimate_bracket(http: HttpClient, deck: DeckModel) -> BracketEstimate:
+    """POST the deck to ``estimate-bracket`` and return the parsed result (cached)."""
+    key = decklist_hash(deck)
+    cached = http.cache.get(BRACKET_CACHE_NAMESPACE, key)
+    if cached is None:
+        cached = http.post_json(ESTIMATE_BRACKET_URL, _deck_request(deck))
+        http.cache.set(BRACKET_CACHE_NAMESPACE, key, cached)
+    return _parse_bracket(cached)
+
+
+def _parse_bracket(payload: dict) -> BracketEstimate:
+    cards = tuple(
+        ClassifiedCard(
+            name=(c.get("card") or {}).get("name", ""),
+            game_changer=bool(c.get("gameChanger")),
+            banned=bool(c.get("banned")),
+            mass_land_denial=bool(c.get("massLandDenial")),
+            extra_turn=bool(c.get("extraTurn")),
+        )
+        for c in payload.get("cards", [])
+    )
+    combos = tuple(
+        ClassifiedCombo(
+            relevant=bool(c.get("relevant")),
+            arguably_two_card=bool(c.get("arguablyTwoCard")),
+            definitely_two_card=bool(c.get("definitelyTwoCard")),
+            speed=int(c.get("speed") or 0),
+            lock=bool(c.get("lock")),
+            extra_turn=bool(c.get("extraTurn")),
+            mass_land_denial=bool(c.get("massLandDenial")),
+            skip_turns=bool(c.get("skipTurns")),
+            control_all_opponents=bool(c.get("controlAllOpponents")),
+            control_some_opponents=bool(c.get("controlSomeOpponents")),
+        )
+        for c in payload.get("combos", [])
+    )
+    return BracketEstimate(tag=payload.get("bracketTag", ""), cards=cards, combos=combos)

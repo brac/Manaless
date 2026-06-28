@@ -7,7 +7,7 @@ import httpx
 from manaless.deck_model import Card, DeckModel
 from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
-from manaless.spellbook_client import decklist_hash, find_my_combos
+from manaless.spellbook_client import decklist_hash, estimate_bracket, find_my_combos
 
 
 def _http(tmp_path, handler) -> HttpClient:
@@ -99,3 +99,44 @@ def test_decklist_hash_is_order_independent():
     c = DeckModel(commanders=(Card("Cmd", 1),), cards=(Card("A", 1), Card("C", 2)))
     assert decklist_hash(a) == decklist_hash(b)
     assert decklist_hash(a) != decklist_hash(c)
+
+
+BRACKET_RESPONSE = {
+    "bracketTag": "S",
+    "cards": [
+        {"card": {"name": "Cyclonic Rift"}, "quantity": 1, "gameChanger": True,
+         "banned": False, "massLandDenial": False, "extraTurn": False},
+        {"card": {"name": "Armageddon"}, "quantity": 1, "gameChanger": False,
+         "banned": False, "massLandDenial": True, "extraTurn": False},
+    ],
+    "combos": [
+        {"relevant": True, "arguablyTwoCard": True, "definitelyTwoCard": True,
+         "speed": 4, "lock": False, "extraTurn": False, "massLandDenial": False,
+         "skipTurns": False, "controlAllOpponents": False, "controlSomeOpponents": False},
+    ],
+    "templates": [],
+}
+
+
+def test_estimate_bracket_parses_tag_and_flags(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(200, json=BRACKET_RESPONSE))
+    est = estimate_bracket(http, _deck())
+    assert est.tag == "S"
+    assert {c.name for c in est.cards} == {"Cyclonic Rift", "Armageddon"}
+    assert next(c for c in est.cards if c.name == "Cyclonic Rift").game_changer is True
+    assert next(c for c in est.cards if c.name == "Armageddon").mass_land_denial is True
+    combo = est.combos[0]
+    assert combo.relevant and combo.definitely_two_card and combo.speed == 4
+
+
+def test_estimate_bracket_cached_by_hash(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json=BRACKET_RESPONSE)
+
+    http = _http(tmp_path, handler)
+    estimate_bracket(http, _deck())
+    estimate_bracket(http, _deck())
+    assert calls["n"] == 1

@@ -20,3 +20,8 @@ data/precons/
 
 # macOS
 .DS_Store
+
+# Personal collection file (§9 / buy-pipeline.md) — local only, never publish
+myCollection.csv
+/collection.csv
+/collection.json

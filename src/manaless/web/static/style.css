@@ -110,6 +110,10 @@ select:focus { outline: 2px solid var(--accent); }
 /* --- collection / owned --- */
 .owned-summary { color: var(--muted); margin: 0 0 .8rem; }
 .owned-tag { color: var(--good); font-size: .72rem; white-space: nowrap; }
+.pop { display: flex; align-items: center; gap: .35rem; font-size: .7rem; color: var(--muted); }
+.pop .popbar { flex: 1; height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; }
+.pop .popbar > span { display: block; height: 100%; background: var(--accent); }
+.pop .poplabel { white-space: nowrap; min-width: 2.2em; text-align: right; }
 .collection { max-width: 640px; margin: 2rem auto; }
 .import { display: flex; gap: .5rem; align-items: center; margin: 1rem 0; }
 .flash.ok { color: var(--good); }

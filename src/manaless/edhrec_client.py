@@ -14,6 +14,7 @@ operations live on :class:`EdhrecClient`, which owns the rate-limited
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import httpx
 
@@ -21,6 +22,7 @@ from manaless.http.client import HttpClient
 
 EDHREC_HOME = "https://edhrec.com/"
 DECK_TABLE_URL = "https://json.edhrec.com/pages/decks/{slug}.json"
+COMMANDER_PAGE_URL = "https://json.edhrec.com/pages/commanders/{slug}.json"
 DECK_PREVIEW_URL = (
     "https://edhrec.com/_next/data/{build_id}/deckpreview/{deck_id}.json"
     "?deckId={deck_id}"
@@ -58,6 +60,46 @@ class EdhrecBuildIdError(EdhrecError):
 
 class EdhrecDeckNotFound(EdhrecError):
     """A decklist could not be fetched for a deck id, even after a build-id refresh."""
+
+
+@dataclass(frozen=True, slots=True)
+class CardPopularity:
+    """How often a card appears in EDHREC decks for a given commander.
+
+    ``num_decks`` of ``potential_decks`` run it; ``percent`` is the inclusion
+    rate. ``synergy`` is EDHREC's synergy score (how much *more* this commander
+    runs it vs. the colour-identity baseline).
+    """
+
+    name: str
+    num_decks: int
+    potential_decks: int
+    synergy: float = 0.0
+
+    @property
+    def percent(self) -> float:
+        return 100.0 * self.num_decks / self.potential_decks if self.potential_decks else 0.0
+
+
+def _popularity_key(name: str) -> str:
+    """Front-face, case-folded — so a card matches regardless of DFC spelling/case."""
+    return name.split("//", 1)[0].strip().casefold()
+
+
+@dataclass(frozen=True, slots=True)
+class PopularityIndex:
+    """Per-commander card-popularity lookup, keyed by `_popularity_key(name)`."""
+
+    cards: dict
+
+    def get(self, name: str) -> CardPopularity | None:
+        return self.cards.get(_popularity_key(name))
+
+    def __bool__(self) -> bool:
+        return bool(self.cards)
+
+    def __len__(self) -> int:
+        return len(self.cards)
 
 
 def format_commander_name(name: str) -> str:
@@ -120,6 +162,51 @@ class EdhrecClient:
         if not isinstance(data, dict):
             return []
         return data.get("table") or []
+
+    def fetch_commander_card_stats(self, commander: str) -> PopularityIndex:
+        """Aggregate card popularity for a commander: ``{card -> CardPopularity}``.
+
+        From the EDHREC commander page (``cardlists`` grouped by category). A card
+        can appear in several lists (e.g. "New Cards" uses a smaller recent-decks
+        denominator); we keep the entry with the **largest** ``potential_decks`` so
+        the percentage is the headline inclusion rate, not a recent-only slice.
+
+        Returns an empty index when EDHREC has no page for the commander.
+        """
+        slug = format_commander_name(commander)
+        try:
+            data = self._http.get_json(
+                COMMANDER_PAGE_URL.format(slug=slug),
+                cache_namespace="edhrec-commander",
+                cache_key=slug,
+                ttl_seconds=DECK_TABLE_TTL_SECONDS,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _NO_DECK_TABLE_STATUS:
+                return PopularityIndex({})
+            raise
+
+        container = data.get("container") if isinstance(data, dict) else None
+        json_dict = container.get("json_dict") if isinstance(container, dict) else None
+        cardlists = json_dict.get("cardlists") if isinstance(json_dict, dict) else None
+
+        cards: dict[str, CardPopularity] = {}
+        for cardlist in cardlists or []:
+            for cv in cardlist.get("cardviews") or []:
+                name = cv.get("name")
+                if not name:
+                    continue
+                potential = int(cv.get("potential_decks") or 0)
+                key = _popularity_key(name)
+                prev = cards.get(key)
+                if prev is None or potential > prev.potential_decks:
+                    cards[key] = CardPopularity(
+                        name=name,
+                        num_decks=int(cv.get("num_decks") or 0),
+                        potential_decks=potential,
+                        synergy=float(cv.get("synergy") or 0.0),
+                    )
+        return PopularityIndex(cards)
 
     def fetch_deck(self, deck_id: str) -> list[str]:
         """Full decklist for a deck id as a flat ``["1 Card Name", ...]`` array.

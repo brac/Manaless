@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 
 from manaless.deck_model import DeckModel
+from manaless.edhrec_client import PopularityIndex
 from manaless.web.readout import Readouts
 
 COOKIE_NAME = "manaless_sid"
@@ -21,10 +22,13 @@ COOKIE_NAME = "manaless_sid"
 
 @dataclass
 class BuildSession:
-    """One tab's current build: the deck plus its last-computed readouts."""
+    """One tab's current build: the deck, its readouts, and commander card stats."""
 
     deck: DeckModel
     readouts: Readouts
+    # Aggregate EDHREC card popularity for this commander; fetched once at build
+    # time (it doesn't change as the user substitutes within the same commander).
+    popularity: PopularityIndex = field(default_factory=lambda: PopularityIndex({}))
     lock: Lock = field(default_factory=Lock)
 
 

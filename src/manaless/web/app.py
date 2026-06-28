@@ -108,6 +108,7 @@ def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) ->
         "owned_have": have,
         "owned_total": total,
         "missing_count": len(deck_diff(session.deck, owned)),
+        "popularity": session.popularity,
         "error": error,
     }
 
@@ -213,7 +214,8 @@ def build(
             request, "decks.html", {"commander": commander, "rows": [], "error": str(exc)}
         )
     readouts = compute_readouts(http, deck)
-    session = BuildSession(deck=deck, readouts=readouts)
+    popularity = edhrec.fetch_commander_card_stats(commander)
+    session = BuildSession(deck=deck, readouts=readouts, popularity=popularity)
     sid = store.new_id()
     store.set(sid, session)
     resp = _render_builder(request, session, owned)

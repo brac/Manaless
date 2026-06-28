@@ -21,6 +21,13 @@
       <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
         {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
       </div>
+      {% set pop = popularity.get(card.name) if popularity else none %}
+      {% if pop %}
+      <div class="pop" title="Run in {{ pop.num_decks }} of {{ pop.potential_decks }} EDHREC decks for this commander">
+        <span class="popbar"><span style="width: {{ pop.percent | round | int }}%"></span></span>
+        <span class="poplabel">{% if pop.percent >= 1 %}{{ pop.percent | round | int }}%{% else %}&lt;1%{% endif %}</span>
+      </div>
+      {% endif %}
       <div class="cardctl">
         <form class="swap" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
               hx-indicator="#global-spinner">

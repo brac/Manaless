@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import manaless.web.readout as readout_mod
 from manaless.collection import Collection
+from manaless.edhrec_client import CardPopularity, PopularityIndex
 from manaless.scryfall_client import ScryfallCard
 from manaless.spellbook_client import BracketEstimate, Combo, ComboResults
 from manaless.web.app import (
@@ -31,6 +32,9 @@ class FakeEdhrec:
 
     def fetch_deck(self, deck_id):
         return ["1 Atraxa, Praetors' Voice", "1 Sol Ring", "1 Counterspell"]
+
+    def fetch_commander_card_stats(self, commander):
+        return PopularityIndex({"sol ring": CardPopularity("Sol Ring", 85, 100, -0.02)})  # 85%
 
 
 def _meta(name):
@@ -126,6 +130,12 @@ def test_build_creates_session_and_renders_readouts(client):
     assert "Sol Ring" in r.text
     assert "Bracket" in r.text and "Win conditions" in r.text
     assert client.cookies.get("manaless_sid")  # session cookie set
+
+
+def test_build_shows_card_popularity(client):
+    r = _build(client)
+    assert "85%" in r.text  # Sol Ring inclusion from the commander page
+    assert "EDHREC decks for this commander" in r.text  # the popularity bar tooltip
 
 
 def test_substitute_returns_updated_fragment(client):

@@ -53,7 +53,15 @@
   provides — newest/oldest, price ↑/↓, bracket ↑/↓, saltiest/least-salty (no
   per-deck popularity exists in the data). Capped to the **top 100** of (for Atraxa)
   ~42k rows, with a "showing top N of M" line. Sort spec: `web.app.DECK_SORTS`.
-- **Tests: 166 passing**, no live network in the suite (httpx MockTransport / fakes;
+- **Aggregate card popularity (web):** each builder card shows its EDHREC inclusion
+  rate ("X% of decks for this commander", with a bar). `EdhrecClient`
+  `fetch_commander_card_stats` → `PopularityIndex` from the commander page
+  (`json.edhrec.com/pages/commanders/{slug}.json`; per-card `num_decks/potential_decks`,
+  dedup keeps the largest denominator). Fetched once per build, stored on the
+  session. Covers EDHREC's ~top-300 cards per commander (≈74% of a mainstream deck);
+  no badge = an off-meta pick. This is the inclusion-data slice of the deferred §11
+  substitution palette.
+- **Tests: 171 passing**, no live network in the suite (httpx MockTransport / fakes;
   web routes via FastAPI `TestClient` with deps overridden).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 

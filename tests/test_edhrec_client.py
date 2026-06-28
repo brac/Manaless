@@ -93,6 +93,57 @@ def test_fetch_deck_table_reraises_other_errors(tmp_path):
         client.fetch_deck_table("Atraxa, Praetors' Voice")
 
 
+# --- commander card popularity -------------------------------------------
+
+def _commander_page() -> dict:
+    return {
+        "container": {
+            "json_dict": {
+                "cardlists": [
+                    # "New Cards" uses a smaller recent-decks denominator (100)...
+                    {"header": "New Cards", "cardviews": [
+                        {"name": "Sol Ring", "num_decks": 90, "potential_decks": 100, "synergy": 0.1},
+                    ]},
+                    # ...the main list uses the real denominator (1000) -> 85%.
+                    {"header": "Mana Artifacts", "cardviews": [
+                        {"name": "Sol Ring", "num_decks": 850, "potential_decks": 1000, "synergy": -0.02},
+                    ]},
+                    {"header": "Instants", "cardviews": [
+                        {"name": "Counterspell", "num_decks": 370, "potential_decks": 1000},
+                        {"name": "", "num_decks": 5, "potential_decks": 1000},  # skipped: no name
+                    ]},
+                ]
+            }
+        }
+    }
+
+
+def test_commander_stats_inclusion_percent_and_denominator(tmp_path):
+    client = _client(tmp_path, lambda r: httpx.Response(200, json=_commander_page()))
+    stats = client.fetch_commander_card_stats("Atraxa, Praetors' Voice")
+    sol = stats.get("Sol Ring")
+    assert sol.percent == 85.0  # picks potential_decks=1000, not the New-Cards 100
+    assert sol.num_decks == 850
+    assert round(stats.get("counterspell").percent) == 37  # case-insensitive lookup
+    assert len(stats) == 2  # the unnamed cardview is dropped
+
+
+def test_commander_stats_dfc_front_face_lookup(tmp_path):
+    page = {"container": {"json_dict": {"cardlists": [
+        {"header": "Top", "cardviews": [{"name": "Valki, God of Lies", "num_decks": 10, "potential_decks": 100}]},
+    ]}}}
+    client = _client(tmp_path, lambda r: httpx.Response(200, json=page))
+    stats = client.fetch_commander_card_stats("X")
+    assert stats.get("Valki, God of Lies // Tibalt, Cosmic Impostor") is not None
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_commander_stats_empty_when_no_page(tmp_path, status):
+    client = _client(tmp_path, lambda r: httpx.Response(status))
+    stats = client.fetch_commander_card_stats("Obscure Commander")
+    assert not stats and len(stats) == 0
+
+
 # --- decklist + runbook retry --------------------------------------------
 
 def test_fetch_deck_parses_flat_list(tmp_path):

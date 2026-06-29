@@ -59,9 +59,13 @@
   (`json.edhrec.com/pages/commanders/{slug}.json`; per-card `num_decks/potential_decks`,
   dedup keeps the largest denominator). Fetched once per build, stored on the
   session. Covers EDHREC's ~top-300 cards per commander (≈74% of a mainstream deck);
-  no badge = an off-meta pick. This is the inclusion-data slice of the deferred §11
-  substitution palette.
-- **Tests: 171 passing**, no live network in the suite (httpx MockTransport / fakes;
+  no badge = an off-meta pick.
+- **Substitution palette (web, §11):** a "Popular cards to add" panel in the builder
+  sidebar lists the most-played cards for the commander you're *not* running
+  (`PopularityIndex.excluding(deck)`, ranked by `num_decks`), each a one-click add.
+  OOB-swapped, so it refreshes as you edit. This is the §11 palette (inclusion-based;
+  a synergy-sorted variant is the only remaining extension).
+- **Tests: 174 passing**, no live network in the suite (httpx MockTransport / fakes;
   web routes via FastAPI `TestClient` with deps overridden).
 - The strict build order is in [CLAUDE.md §3](CLAUDE.md). Do not jump ahead.
 
@@ -132,13 +136,13 @@ next moves, in rough priority:
    spells differently (buy-pipeline.md "name normalization"). Not needed until a real
    order misbehaves.
 3. **UI polish backlog** (only if real use wants it):
-   - **EDHREC synergy "substitution palette"** — the deferred parts-bin (CLAUDE.md
-     §4/§11). Needs a new `edhrec_client` method for the synergy/inclusion endpoint;
-     v1 uses free-text + the step-2 "Add 1" suggestions instead.
    - **§5 average-deck fallback** (still unbuilt project-wide) — the picker shows a
-     friendly "no decks" message; `build_deck` raises `NoDecksAvailable`.
-   - Card autocomplete on the swap box (Scryfall `cards/autocomplete`), a salt/price
-     band filter on the picker, persisting a build across restarts.
+     friendly "no decks" message; `build_deck` raises `NoDecksAvailable`. This is the
+     one remaining piece of *agreed core scope* that isn't built.
+   - Card autocomplete on the swap box (Scryfall `cards/autocomplete`); a bracket /
+     price / tag **filter** on the picker (sort exists, filter doesn't); a
+     synergy-sorted variant of the substitution palette; persisting a build across
+     restarts; wheel-packaging the `web/templates` + `web/static` data files.
 
 ### Web UI notes worth knowing
 - **Sync handlers over one shared sync `HttpClient`.** The pipeline is synchronous

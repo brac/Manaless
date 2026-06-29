@@ -109,6 +109,7 @@ def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) ->
         "owned_total": total,
         "missing_count": len(deck_diff(session.deck, owned)),
         "popularity": session.popularity,
+        "palette": session.popularity.excluding(session.deck.card_names())[:PALETTE_LIMIT],
         "error": error,
     }
 
@@ -149,6 +150,7 @@ DECK_SORTS: dict[str, tuple[str, str, bool]] = {
     "salt_low": ("Least salty", "salt", False),
 }
 DECK_LIST_LIMIT = 100  # Atraxa alone has ~42k indexed decks; show the top slice.
+PALETTE_LIMIT = 24  # most-played cards not in the deck, offered as add suggestions.
 
 
 def _sort_deck_rows(rows: list[dict], sort: str) -> list[dict]:

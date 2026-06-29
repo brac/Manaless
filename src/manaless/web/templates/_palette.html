@@ -1,0 +1,15 @@
+{% if palette %}
+<div class="panel palette">
+  <h2>Popular cards to add</h2>
+  <p class="muted">Most-played cards for this commander you're not running — click to add.</p>
+  <ul class="addlist">
+    {% for cp in palette %}
+    <li>
+      <button class="add" hx-post="/build/add" hx-target="#cardlist" hx-swap="outerHTML"
+              hx-indicator="#global-spinner" hx-vals='{"name": {{ cp.name | tojson }} }'>+ {{ cp.name }}</button>
+      <span class="muted" title="Run in {{ cp.num_decks }} of {{ cp.potential_decks }} EDHREC decks">{{ cp.percent | round | int }}%</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}

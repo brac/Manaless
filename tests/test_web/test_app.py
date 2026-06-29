@@ -34,7 +34,11 @@ class FakeEdhrec:
         return ["1 Atraxa, Praetors' Voice", "1 Sol Ring", "1 Counterspell"]
 
     def fetch_commander_card_stats(self, commander):
-        return PopularityIndex({"sol ring": CardPopularity("Sol Ring", 85, 100, -0.02)})  # 85%
+        return PopularityIndex({
+            "sol ring": CardPopularity("Sol Ring", 85, 100, -0.02),  # in the deck (85%)
+            "smothering tithe": CardPopularity("Smothering Tithe", 60, 100, -0.1),  # not in deck
+            "rhystic study": CardPopularity("Rhystic Study", 55, 100, 0.2),  # not in deck
+        })
 
 
 def _meta(name):
@@ -138,12 +142,30 @@ def test_build_shows_card_popularity(client):
     assert "EDHREC decks for this commander" in r.text  # the popularity bar tooltip
 
 
+def test_build_shows_substitution_palette(client):
+    r = _build(client)
+    assert "Popular cards to add" in r.text
+    assert "Smothering Tithe" in r.text  # popular + not in deck -> offered
+
+
+def test_palette_drops_card_once_added(client):
+    _build(client)
+    r = client.post("/build/add", data={"name": "Smothering Tithe"})
+    assert "Smothering Tithe" in r.text  # now in the card list
+    # palette is OOB-swapped and recomputed; the added card no longer appears as an
+    # add suggestion (its only other mention would be the palette button).
+    assert "Popular cards to add" in r.text
+    assert r.text.count("+ Smothering Tithe") == 0
+
+
 def test_substitute_returns_updated_fragment(client):
     _build(client)
     r = client.post("/build/substitute", data={"old_name": "Sol Ring", "new_name": "Arcane Signet"})
     assert r.status_code == 200
     assert "Arcane Signet" in r.text
-    assert "Sol Ring" not in r.text
+    # Sol Ring is gone from the card list (its swap form carried value="Sol Ring");
+    # it may still appear as a palette suggestion now that it's no longer in the deck.
+    assert 'value="Sol Ring"' not in r.text
     assert 'id="readouts"' in r.text and 'hx-swap-oob' in r.text  # OOB readouts update
 
 

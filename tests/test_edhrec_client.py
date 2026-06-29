@@ -8,9 +8,11 @@ import httpx
 import pytest
 
 from manaless.edhrec_client import (
+    CardPopularity,
     EdhrecBuildIdError,
     EdhrecClient,
     EdhrecDeckNotFound,
+    PopularityIndex,
     filter_deck_hashes,
 )
 from manaless.http.cache import DiskCache
@@ -142,6 +144,16 @@ def test_commander_stats_empty_when_no_page(tmp_path, status):
     client = _client(tmp_path, lambda r: httpx.Response(status))
     stats = client.fetch_commander_card_stats("Obscure Commander")
     assert not stats and len(stats) == 0
+
+
+def test_popularity_excluding_filters_deck_and_sorts_by_usage():
+    idx = PopularityIndex({
+        "sol ring": CardPopularity("Sol Ring", 900, 1000),
+        "smothering tithe": CardPopularity("Smothering Tithe", 600, 1000),
+        "counterspell": CardPopularity("Counterspell", 370, 1000),
+    })
+    out = idx.excluding(["counterspell"])  # case-insensitive exclusion
+    assert [c.name for c in out] == ["Sol Ring", "Smothering Tithe"]  # most-played first
 
 
 # --- decklist + runbook retry --------------------------------------------

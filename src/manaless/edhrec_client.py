@@ -95,6 +95,17 @@ class PopularityIndex:
     def get(self, name: str) -> CardPopularity | None:
         return self.cards.get(_popularity_key(name))
 
+    def excluding(self, names) -> list[CardPopularity]:
+        """Popular cards minus ``names`` (a deck), most-played first.
+
+        Ranked by ``num_decks`` (raw usage), not ``percent`` — so a niche card
+        with a small recent-decks denominator can't masquerade near the top.
+        """
+        skip = {_popularity_key(n) for n in names}
+        out = [cp for key, cp in self.cards.items() if key not in skip]
+        out.sort(key=lambda cp: cp.num_decks, reverse=True)
+        return out
+
     def __bool__(self) -> bool:
         return bool(self.cards)
 

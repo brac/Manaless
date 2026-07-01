@@ -22,8 +22,32 @@
     modal.querySelector("img").src = "";
   }
 
+  // --- 1a. swap modal (category-matched suggestions) ---------------------
+  var swapModal = document.getElementById("swapmodal");
+
+  function openSwap() {
+    if (swapModal) swapModal.hidden = false;
+  }
+  function closeSwap() {
+    if (!swapModal) return;
+    swapModal.hidden = true;
+    var body = document.getElementById("swapmodal-body");
+    if (body) body.innerHTML = ""; // drop stale suggestions so the next open is fresh
+  }
+
   document.addEventListener("click", function (e) {
-    var img = e.target.closest ? e.target.closest("#cardlist .card img") : null;
+    if (!e.target.closest) return;
+    if (e.target.closest(".swap-open")) {
+      openSwap(); // HTMX loads #swapmodal-body concurrently via the button's hx-get
+      return;
+    }
+    // Close on the ✕ or a backdrop click (but not clicks inside the panel).
+    if (swapModal && !swapModal.hidden &&
+        (e.target.closest(".swapmodal-close") || e.target === swapModal)) {
+      closeSwap();
+      return;
+    }
+    var img = e.target.closest("#cardlist .card img");
     if (img) {
       openModal(img.getAttribute("src"), img.getAttribute("alt"));
       return;
@@ -31,7 +55,18 @@
     if (modal && !modal.hidden && e.target.closest("#cardmodal")) closeModal();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") {
+      closeModal();
+      closeSwap();
+    }
+  });
+  // A successful swap (suggestion submit, or autocomplete choose -> requestSubmit)
+  // refreshes the board via OOB swaps; close the modal once it lands.
+  document.body.addEventListener("htmx:afterRequest", function (e) {
+    if (e.detail && e.detail.successful && e.target.closest &&
+        e.target.closest("#swapmodal")) {
+      closeSwap();
+    }
   });
 
   // --- 1b. hover card preview (palette add buttons) ----------------------

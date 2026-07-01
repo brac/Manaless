@@ -37,6 +37,12 @@ class BuildSession:
     # enriched once at build time so the palette can show a card-type tag and a
     # hover preview without any per-edit network call. Keyed by card name.
     palette_meta: dict[str, ScryfallCard] = field(default_factory=dict)
+    # Swap-suggestion memo (build step 4): the same commander pool classified into
+    # functional categories (Ramp/Removal/…) once, then reused across swaps. Popularity
+    # is fixed per commander and a card's category never changes, so only the per-request
+    # deck-exclusion filter varies. Populated lazily on first swap-modal open.
+    suggest_cat: dict[str, str] = field(default_factory=dict)  # card name -> functional category
+    suggest_meta: dict[str, ScryfallCard] = field(default_factory=dict)  # card name -> enrichment
     lock: Lock = field(default_factory=Lock)
 
 

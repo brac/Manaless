@@ -121,6 +121,23 @@ suggestion to submit the swap.
 ## Suggest Replacments during deck buildling
 If I want to swap out 4 creatures or ramp I want to have 4 creature or ramp suggestions that come from the syngeristic cards with that commander deck. I don't want to have to swap one for one, but in the suggestions area we could have a suggestion section that is specifically to replace the same kind of cards that were just removed during deck building. AND the swap to input could be a button, clicking opens a little model that has the input text area for the same fuzzy search input functionlatiy but it also has a list of the same kinds of card that has a high inclusion with this commander, synergistically. Catagories like Ramp Removal Draw, etc sould be the goal if you can figure iut out but otherwise skryfall type is fine. We want to be sure to replace category for category, not just pure type. 
 
+**Resolved:** the inline "swap to…" input is now a **swap** button that opens a
+modal (`_swap_suggestions.html`, loaded lazily from `GET /build/suggest`). The
+modal keeps the Scryfall fuzzy search *and* lists same-category replacements drawn
+from the commander's most-played cards. Categories are **functional** — Ramp /
+Removal / Card Draw / Board Wipe / Counterspell inferred from Scryfall
+`type_line` + `oracle_text` (`card_category.py`, oracle-heuristic style borrowed
+from `win_conditions.py`), falling back to primary type when nothing matches — so
+swaps go category-for-category, not raw-type-for-raw-type. Suggestions rank by
+play-rate (`num_decks`) with `synergy` as the tiebreak. The pool is classified once
+and memoized on the session (`suggest_cat`/`suggest_meta`); picking a suggestion (or
+the fuzzy search) posts to the unchanged `/build/substitute` and closes the modal.
+
 
 ## Scroll in the info bar
 On the info bar on the right, with the bracket number, combos and cards frequently included, I can't scroll that without going to the bottom of the card list page as well. Please make that scrollable column on the right indpendently scrollable. 
+
+**Resolved (CSS only):** the right column (`.right`) now has
+`max-height: calc(100vh - 2rem); overflow-y: auto`, so it scrolls independently
+while the card list stays put; the palette's inner `max-height` was dropped so the
+column scrolls as one unit, and the <900px stacked layout un-clips the column.

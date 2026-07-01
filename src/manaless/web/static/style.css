@@ -81,7 +81,7 @@ select:focus { outline: 2px solid var(--accent); }
 .flash:empty { display: none; }
 
 .layout { display: grid; grid-template-columns: 1fr 380px; gap: 1.2rem; align-items: start; }
-.right { position: sticky; top: 1rem; }
+.right { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
 
 .cat { margin-bottom: 1.2rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .7rem; }
@@ -100,8 +100,6 @@ select:focus { outline: 2px solid var(--accent); }
 .card .noimg { aspect-ratio: 5/7; display: grid; place-items: center; text-align: center; padding: .4rem; background: var(--panel2); border-radius: 6px; font-size: .8rem; }
 .cardname { font-size: .82rem; line-height: 1.25; }
 .cardctl { display: flex; gap: .3rem; }
-.cardctl .swap { flex: 1; }
-.cardctl input { width: 100%; font-size: .8rem; padding: .25rem .4rem; }
 .rm { background: var(--panel2); color: var(--muted); padding: .25rem .5rem; }
 .rm:hover { background: var(--bad); color: #1a0000; }
 .buy { background: var(--panel2); color: var(--good); border: 1px solid var(--border); border-radius: 7px; padding: .25rem .5rem; font-weight: 700; display: grid; place-items: center; }
@@ -136,7 +134,7 @@ select:focus { outline: 2px solid var(--accent); }
 .combos, .addone { margin: .3rem 0; padding-left: 0; list-style: none; }
 .combos li, .addone li { padding: .2rem 0; border-bottom: 1px solid var(--border); font-size: .88rem; }
 .add { background: var(--good); color: #042417; padding: .15rem .5rem; font-size: .82rem; }
-.addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: 420px; overflow-y: auto; }
+.addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: none; }
 .addlist li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }
 .addlist .add { flex: 1; text-align: left; }
 .type-tag {
@@ -167,6 +165,30 @@ select:focus { outline: 2px solid var(--accent); }
 }
 .cardmodal[hidden] { display: none; }
 .cardmodal img { max-height: 90vh; max-width: 90vw; border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.6); }
+
+/* --- swap modal (category-matched suggestions) --- */
+.swapmodal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .8);
+  display: grid; place-items: center; padding: 2rem;
+}
+.swapmodal[hidden] { display: none; }
+.swapmodal-inner {
+  position: relative;
+  width: 100%; max-width: 520px; max-height: 85vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.1rem 1.2rem; box-shadow: 0 12px 48px rgba(0,0,0,.6);
+}
+.swapmodal-close { position: absolute; top: .7rem; right: .7rem; background: var(--panel2); color: var(--muted); padding: .2rem .5rem; }
+.swapmodal-close:hover { background: var(--bad); color: #1a0000; }
+.swaphead h2 { margin: 0 1.6rem .2rem 0; }
+.swap-search { margin: .6rem 0 .8rem; }
+.swap-search input { width: 100%; }
+.swaplist li form { flex: 1; display: flex; }
+.swaplist .add { flex: 1; text-align: left; }
+.swap-empty { margin: .6rem 0 0; }
+.swap-open { background: var(--panel2); color: var(--muted); padding: .25rem .5rem; flex: 1; }
+.swap-open:hover { background: var(--accent); color: #08121f; }
 
 /* --- autocomplete menu (E5/E6) --- */
 .ac-menu {
@@ -207,5 +229,5 @@ select:focus { outline: 2px solid var(--accent); }
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
-  .right { position: static; }
+  .right { position: static; max-height: none; overflow: visible; }
 }

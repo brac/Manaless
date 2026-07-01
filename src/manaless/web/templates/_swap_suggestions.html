@@ -1,0 +1,35 @@
+{# Swap-modal body (loaded into #swapmodal-body by /build/suggest): a fuzzy card
+   search that swaps in any card, plus same-category replacement suggestions ranked
+   by play-rate. Both the search form and each suggestion post to /build/substitute,
+   which returns _update.html (OOB-refreshing the card list, readouts, palette,
+   count, flash). ui.js closes the modal on a successful swap. #}
+<div class="swaphead">
+  <h2>Swap out {{ old_name }}</h2>
+  <p class="muted">Same category: <strong>{{ category }}</strong> — pick a replacement, or search for any card.</p>
+</div>
+
+<form class="swap-search" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
+      hx-indicator="#global-spinner">
+  <input type="hidden" name="old_name" value="{{ old_name }}">
+  <input type="text" name="new_name" placeholder="swap to any card…" autocomplete="off"
+         data-autocomplete="card" autofocus>
+</form>
+
+{% if suggestions %}
+<ul class="addlist swaplist">
+  {% for cp in suggestions %}
+  <li>
+    <form hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
+          hx-indicator="#global-spinner">
+      <input type="hidden" name="old_name" value="{{ old_name }}">
+      <input type="hidden" name="new_name" value="{{ cp.name }}">
+      <button type="submit" class="add"{% if cp.image_url %} data-img="{{ cp.image_url }}"{% endif %}>+ {{ cp.name }}</button>
+    </form>
+    {% if cp.type_abbr %}<span class="type-tag" title="{{ cp.type_full }}">{{ cp.type_abbr }}</span>{% endif %}
+    <span class="muted" title="Run in {{ cp.num_decks }} of {{ cp.potential_decks }} EDHREC decks">{{ cp.percent | round | int }}%</span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted swap-empty">No same-category cards to suggest yet — use the search above to swap in any card.</p>
+{% endif %}

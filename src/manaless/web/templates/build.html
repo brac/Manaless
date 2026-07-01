@@ -28,6 +28,15 @@
   </aside>
 </div>
 
+{# Swap modal: opened by a card's "swap" button; body is lazily loaded from
+   /build/suggest (fuzzy search input + same-category suggestions). Toggled by ui.js. #}
+<div id="swapmodal" class="swapmodal" hidden>
+  <div class="swapmodal-inner">
+    <button type="button" class="swapmodal-close" aria-label="close">✕</button>
+    <div id="swapmodal-body"></div>
+  </div>
+</div>
+
 {# Full-size card image modal (E1); populated + toggled by ui.js on card click. #}
 <div id="cardmodal" class="cardmodal" hidden>
   <img alt="">

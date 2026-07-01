@@ -56,12 +56,10 @@
       </div>
       {% endif %}
       <div class="cardctl">
-        <form class="swap" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
-              hx-indicator="#global-spinner">
-          <input type="hidden" name="old_name" value="{{ card.name }}">
-          <input type="text" name="new_name" placeholder="swap to…" autocomplete="off"
-                 data-autocomplete="card">
-        </form>
+        <button type="button" class="swap-open"
+                hx-get="/build/suggest?old_name={{ card.name | urlencode }}"
+                hx-target="#swapmodal-body" hx-swap="innerHTML"
+                hx-indicator="#global-spinner">swap</button>
         <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
            title="Buy on TCGplayer">$</a>
         <button class="rm" title="remove" hx-post="/build/remove" hx-target="#cardlist"

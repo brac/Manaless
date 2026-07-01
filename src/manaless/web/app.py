@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from manaless.buy import deck_diff, is_basic_land, mass_entry_url, single_card_url
+from manaless.card_category import category_of
 from manaless.collection import Collection
 from manaless.deck_builder import (
     NoDecksAvailable,
@@ -191,6 +192,32 @@ def _render_update(request, session, owned, *, flash=None, flash_kind=""):
     return templates.TemplateResponse(request, "_update.html", ctx)
 
 
+def _ensure_suggest_pool(session: BuildSession, enrich) -> None:
+    """Populate ``session.suggest_cat``/``suggest_meta`` once (lazy, memoized).
+
+    Classifies the commander's top ``SUGGEST_POOL_LIMIT`` most-played cards into
+    functional categories so the swap modal can offer same-category replacements.
+    Popularity + a card's category are fixed for the session, so this runs at most
+    once: the build-time ``palette_meta`` seeds most of the enrichment, and only the
+    misses hit Scryfall (one batched, disk-cached call). Guarded by ``session.lock``
+    so two concurrent modal opens can't double-enrich.
+    """
+    with session.lock:
+        if session.suggest_cat:
+            return
+        pool = session.popularity.excluding([])[:SUGGEST_POOL_LIMIT]
+        names = [cp.name for cp in pool]
+        meta = {n: session.palette_meta[n] for n in names if n in session.palette_meta}
+        misses = [n for n in names if n not in meta]
+        if misses:
+            meta.update(enrich(misses))
+        session.suggest_meta = meta
+        session.suggest_cat = {
+            cp.name: category_of(meta[cp.name]) if cp.name in meta else "Other"
+            for cp in pool
+        }
+
+
 # --- routes --------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -291,6 +318,11 @@ PALETTE_LIMIT = 24  # most-played cards not in the deck, offered as add suggesti
 # Enrich a bit more than PALETTE_LIMIT once at build time so the palette still has
 # type tags + hover images as removing deck cards rotates new suggestions in.
 PALETTE_META_LIMIT = 80
+# Swap suggestions (build step 4): classify the top SUGGEST_POOL_LIMIT most-played
+# cards for the commander into functional categories once, then offer up to
+# SUGGEST_LIMIT of the same category as replacements for a swapped-out card.
+SUGGEST_POOL_LIMIT = 120
+SUGGEST_LIMIT = 12
 
 
 def _sort_deck_rows(rows: list[dict], sort: str) -> list[dict]:
@@ -409,6 +441,60 @@ def substitute(
         return _render_update(
             request, session, owned, flash=f"Swapped in {new_name}", flash_kind="ok"
         )
+
+
+@app.get("/build/suggest", response_class=HTMLResponse)
+def build_suggest(
+    request: Request,
+    old_name: str = "",
+    enrich=Depends(get_enrich),
+    store: SessionStore = Depends(get_store),
+):
+    """Same-category replacement suggestions for the card being swapped (modal body).
+
+    Classifies ``old_name`` functionally (Ramp/Removal/Draw/…), then offers the
+    most-played cards of that same category not already in the deck — ranked by
+    play-rate, synergy as a tiebreak. Fetched lazily by the swap modal's ``hx-get``.
+    """
+    session = store.get(request.cookies.get(COOKIE_NAME))
+    if session is None:
+        return RedirectResponse("/", status_code=303)
+
+    folded = old_name.strip().casefold()
+    card = next((c for c in session.deck.all_cards() if c.name.casefold() == folded), None)
+    _ensure_suggest_pool(session, enrich)
+    if card is not None:
+        category = category_of(card)
+    else:  # not a deck card (shouldn't happen from the UI) — fall back to the pool
+        category = session.suggest_cat.get(old_name.strip(), "Other")
+
+    cands = [
+        cp
+        for cp in session.popularity.excluding(session.deck.card_names())
+        if session.suggest_cat.get(cp.name) == category
+    ]
+    cands.sort(key=lambda cp: (cp.num_decks, cp.synergy), reverse=True)
+
+    suggestions = []
+    for cp in cands[:SUGGEST_LIMIT]:
+        meta = session.suggest_meta.get(cp.name)
+        abbr, full = _type_tag(meta.type_line) if meta else ("", "")
+        suggestions.append(
+            {
+                "name": cp.name,
+                "percent": cp.percent,
+                "num_decks": cp.num_decks,
+                "potential_decks": cp.potential_decks,
+                "type_abbr": abbr,
+                "type_full": full,
+                "image_url": meta.image_url if meta else None,
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "_swap_suggestions.html",
+        {"old_name": old_name.strip(), "category": category, "suggestions": suggestions},
+    )
 
 
 @app.post("/build/remove", response_class=HTMLResponse)

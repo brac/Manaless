@@ -370,11 +370,39 @@ def test_commander_listed_first_in_builder(client):
     assert r.text.index("Atraxa") < r.text.index("Sol Ring")
 
 
-# --- E6: swap box carries autocomplete hook -----------------------------
+# --- E6 / swap modal: category-matched replacement suggestions ----------
 
-def test_swap_input_has_autocomplete_attr(client):
+def test_cardlist_swap_button_targets_suggest_modal(client):
     r = _build(client)
-    assert 'data-autocomplete="card"' in r.text
+    # The inline "swap to…" input is gone; each card now has a swap button that
+    # lazily loads the modal body from /build/suggest.
+    assert 'placeholder="swap to…"' not in r.text
+    assert 'hx-get="/build/suggest?old_name=' in r.text
+    assert 'id="swapmodal"' in r.text  # the modal shell is on the page
+
+
+def test_suggest_returns_same_category_suggestions(client):
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    assert r.status_code == 200
+    # Smothering Tithe + Rhystic Study share Sol Ring's fallback category (all the
+    # fake cards enrich as "Artifact"), so both are offered as replacements.
+    assert "Smothering Tithe" in r.text and "Rhystic Study" in r.text
+    assert "Counterspell" not in r.text  # a deck card -> excluded from suggestions
+
+
+def test_suggest_fragment_posts_substitute_with_old_name(client):
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    assert 'hx-post="/build/substitute"' in r.text
+    assert 'name="old_name" value="Sol Ring"' in r.text  # swap keeps the removed card
+    assert 'data-autocomplete="card"' in r.text  # fuzzy search input carried into the modal
+
+
+def test_suggest_without_session_redirects_home(client):
+    client.cookies.clear()
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"}, follow_redirects=False)
+    assert r.status_code == 303
 
 
 # --- E2/E5: paginated commander browse + fuzzy search -------------------

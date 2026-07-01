@@ -33,6 +33,8 @@
     swapModal.hidden = true;
     var body = document.getElementById("swapmodal-body");
     if (body) body.innerHTML = ""; // drop stale suggestions so the next open is fresh
+    hidePreview(); // a click selection removes the hovered row before mouseout fires,
+    // otherwise the floating preview image stays pinned to the cursor
   }
 
   document.addEventListener("click", function (e) {
@@ -138,6 +140,13 @@
   // --- 1b. hover card preview (palette add buttons) ----------------------
   var preview = document.getElementById("cardpreview");
 
+  function hidePreview() {
+    if (!preview) return;
+    preview.hidden = true;
+    var img = preview.querySelector("img");
+    if (img) img.src = "";
+  }
+
   function positionPreview(e) {
     if (!preview || preview.hidden) return;
     var w = preview.offsetWidth || 300;
@@ -160,8 +169,7 @@
   document.addEventListener("mouseout", function (e) {
     var el = e.target.closest ? e.target.closest("[data-img]") : null;
     if (el && preview && !el.contains(e.relatedTarget)) {
-      preview.hidden = true;
-      preview.querySelector("img").src = "";
+      hidePreview();
     }
   });
 

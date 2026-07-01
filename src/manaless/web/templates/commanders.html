@@ -10,16 +10,17 @@
   <button type="submit">Search</button>
 </form>
 
-{% if names %}
+{% if items %}
   <p class="muted">
-    {% if q %}{{ total }} match(es){% else %}{{ total }} commanders{% endif %},
+    {% if q %}{{ total }} match(es){% else %}top {{ total }} most-played commanders{% endif %},
     EDHREC-ranked · page {{ page }}
   </p>
   <ul class="cmdlist">
-    {% for name in names %}
+    {% for item in items %}
     <li>
-      <a class="cmdpick" href="/decks?commander={{ name | urlencode }}">{{ name }}</a>
-      <span class="muted">browse decks →</span>
+      <a class="cmdpick" href="/decks?commander={{ item.name | urlencode }}">{{ item.name }}</a>
+      {% if item.decks %}<span class="muted">{{ '{:,}'.format(item.decks) }} decks →</span>
+      {% else %}<span class="muted">browse decks →</span>{% endif %}
     </li>
     {% endfor %}
   </ul>

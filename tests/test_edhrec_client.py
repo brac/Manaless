@@ -146,6 +146,32 @@ def test_commander_stats_empty_when_no_page(tmp_path, status):
     assert not stats and len(stats) == 0
 
 
+# --- top commanders (popular browse ranking) -----------------------------
+
+def _top_commanders_page() -> dict:
+    return {"container": {"json_dict": {"cardlists": [
+        {"header": "Past 2 Years", "cardviews": [
+            {"name": "The Ur-Dragon", "num_decks": 48385},
+            {"name": "Edgar Markov", "num_decks": 47842},
+            {"name": "The Ur-Dragon", "num_decks": 48385},  # dupe: kept once
+            {"name": "", "num_decks": 9},                    # skipped: no name
+        ]},
+    ]}}}
+
+
+def test_fetch_top_commanders_ranked_and_deduped(tmp_path):
+    client = _client(tmp_path, lambda r: httpx.Response(200, json=_top_commanders_page()))
+    top = client.fetch_top_commanders()
+    assert [c.name for c in top] == ["The Ur-Dragon", "Edgar Markov"]  # order preserved, deduped
+    assert top[0].num_decks == 48385
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_fetch_top_commanders_empty_when_no_page(tmp_path, status):
+    client = _client(tmp_path, lambda r: httpx.Response(status))
+    assert client.fetch_top_commanders() == []
+
+
 def test_popularity_excluding_filters_deck_and_sorts_by_usage():
     idx = PopularityIndex({
         "sol ring": CardPopularity("Sol Ring", 900, 1000),

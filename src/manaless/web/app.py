@@ -168,27 +168,40 @@ def commanders(
     q: str = "",
     page: int = 1,
     search=Depends(get_search),
+    edhrec: EdhrecClient = Depends(get_edhrec),
 ):
-    """Paginated, EDHREC-ranked commander browser + fuzzy search (E2/E5).
+    """Paginated commander browser + fuzzy search (E2/E5).
 
-    An empty ``q`` lists the most-played commanders; a query fuzzy-matches. Both
-    page through the full pool. Each result links to that commander's deck picker.
+    Empty ``q`` (the "popular" browse) uses **EDHREC's own commander ranking**
+    (deck count), so #1 is The Ur-Dragon — matching the site. A non-empty query
+    fuzzy-matches by name via Scryfall. Both paginate; each result links to that
+    commander's deck picker.
     """
     q = q.strip()
     page = max(1, page)
-    result = search(q, page)
-    names = list(result.names[:COMMANDER_PAGE_SIZE])
-    # ``has_more`` is Scryfall's flag for the *full* 175-row page; if we sliced
-    # below that, there's more to show on the next page regardless.
-    has_more = result.has_more or len(result.names) > COMMANDER_PAGE_SIZE
+    if q:
+        result = search(q, page)
+        names = list(result.names[:COMMANDER_PAGE_SIZE])
+        # ``has_more`` is Scryfall's flag for the *full* page; if we sliced below
+        # that, there's more on the next page regardless.
+        has_more = result.has_more or len(result.names) > COMMANDER_PAGE_SIZE
+        items = [{"name": name, "decks": None} for name in names]
+        total = result.total
+    else:
+        ranked = edhrec.fetch_top_commanders()
+        total = len(ranked)
+        start = (page - 1) * COMMANDER_PAGE_SIZE
+        window = ranked[start : start + COMMANDER_PAGE_SIZE]
+        items = [{"name": c.name, "decks": c.num_decks} for c in window]
+        has_more = start + COMMANDER_PAGE_SIZE < total
     return templates.TemplateResponse(
         request,
         "commanders.html",
         {
             "q": q,
             "page": page,
-            "names": names,
-            "total": result.total,
+            "items": items,
+            "total": total,
             "has_prev": page > 1,
             "has_next": has_more,
         },

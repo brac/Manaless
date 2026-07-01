@@ -23,6 +23,12 @@ from manaless.http.client import HttpClient
 EDHREC_HOME = "https://edhrec.com/"
 DECK_TABLE_URL = "https://json.edhrec.com/pages/decks/{slug}.json"
 COMMANDER_PAGE_URL = "https://json.edhrec.com/pages/commanders/{slug}.json"
+# EDHREC's "top commanders" list (its site default view = past 2 years), ranked by
+# deck count. This is *commander* usage — the right popularity signal for the
+# browse picker — unlike Scryfall's edhrec_rank, which counts total card inclusions
+# and so ranks a card played in the 99 (e.g. Lathliss) above a commander-only card
+# (The Ur-Dragon). Returns ~100 rows, already ordered most-played first.
+TOP_COMMANDERS_URL = "https://json.edhrec.com/pages/commanders/year.json"
 DECK_PREVIEW_URL = (
     "https://edhrec.com/_next/data/{build_id}/deckpreview/{deck_id}.json"
     "?deckId={deck_id}"
@@ -60,6 +66,14 @@ class EdhrecBuildIdError(EdhrecError):
 
 class EdhrecDeckNotFound(EdhrecError):
     """A decklist could not be fetched for a deck id, even after a build-id refresh."""
+
+
+@dataclass(frozen=True, slots=True)
+class TopCommander:
+    """One row of EDHREC's top-commanders list: a commander + its deck count."""
+
+    name: str
+    num_decks: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +232,41 @@ class EdhrecClient:
                         synergy=float(cv.get("synergy") or 0.0),
                     )
         return PopularityIndex(cards)
+
+    def fetch_top_commanders(self) -> list[TopCommander]:
+        """The most-played commanders overall, ranked by deck count (most first).
+
+        Powers the "popular commanders" browse (empty search). Parsed from
+        EDHREC's top-commanders page — the same list its site shows, so the
+        ordering matches (#1 The Ur-Dragon, etc.), which Scryfall's edhrec_rank
+        does not. Returns ``[]`` if EDHREC has no page (its §5 empty signal).
+        """
+        try:
+            data = self._http.get_json(
+                TOP_COMMANDERS_URL,
+                cache_namespace="edhrec-top-commanders",
+                cache_key="year",
+                ttl_seconds=DECK_TABLE_TTL_SECONDS,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _NO_DECK_TABLE_STATUS:
+                return []
+            raise
+
+        container = data.get("container") if isinstance(data, dict) else None
+        json_dict = container.get("json_dict") if isinstance(container, dict) else None
+        cardlists = json_dict.get("cardlists") if isinstance(json_dict, dict) else None
+
+        out: list[TopCommander] = []
+        seen: set[str] = set()
+        for cardlist in cardlists or []:
+            for cv in cardlist.get("cardviews") or []:
+                name = cv.get("name")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                out.append(TopCommander(name=name, num_decks=int(cv.get("num_decks") or 0)))
+        return out
 
     def fetch_deck(self, deck_id: str) -> list[str]:
         """Full decklist for a deck id as a flat ``["1 Card Name", ...]`` array.

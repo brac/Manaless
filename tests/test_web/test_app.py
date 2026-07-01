@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import manaless.web.readout as readout_mod
 from manaless.collection import Collection
-from manaless.edhrec_client import CardPopularity, PopularityIndex
+from manaless.edhrec_client import CardPopularity, PopularityIndex, TopCommander
 from manaless.scryfall_client import ScryfallCard
 from manaless.spellbook_client import BracketEstimate, Combo, ComboResults
 from manaless.scryfall_client import CommanderSearch
@@ -42,6 +42,16 @@ class FakeEdhrec:
             "smothering tithe": CardPopularity("Smothering Tithe", 60, 100, -0.1),  # not in deck
             "rhystic study": CardPopularity("Rhystic Study", 55, 100, 0.2),  # not in deck
         })
+
+    def fetch_top_commanders(self):
+        # EDHREC deck-count ranking (most-played first) + padding past one page.
+        ranked = [
+            ("The Ur-Dragon", 48385),
+            ("Edgar Markov", 47842),
+            ("Atraxa, Praetors' Voice", 42263),
+        ]
+        ranked += [(f"Cmdr {i}", 1000 - i) for i in range(4, 71)]  # 70 total -> page 2
+        return [TopCommander(name=n, num_decks=d) for n, d in ranked]
 
 
 def _meta(name):
@@ -348,11 +358,23 @@ def test_swap_input_has_autocomplete_attr(client):
 
 # --- E2/E5: paginated commander browse + fuzzy search -------------------
 
-def test_commanders_lists_popular(client):
+def test_commanders_popular_uses_edhrec_ranking(client):
+    # The empty "popular" browse ranks by EDHREC deck count, not Scryfall's
+    # card-inclusion rank — so #1 is The Ur-Dragon, above Edgar Markov.
     r = client.get("/commanders")
     assert r.status_code == 200
-    assert "Atraxa" in r.text and "Edgar Markov" in r.text
+    assert r.text.index("The Ur-Dragon") < r.text.index("Edgar Markov")
+    assert "48,385 decks" in r.text  # deck count surfaced on the popular list
     assert "/decks?commander=" in r.text  # each links to its deck picker
+
+
+def test_commanders_popular_paginates(client):
+    r1 = client.get("/commanders", params={"page": 1})
+    assert "The Ur-Dragon" in r1.text
+    assert "page=2" in r1.text  # a live "next" link (70 commanders > one page)
+    r2 = client.get("/commanders", params={"page": 2})
+    assert "Cmdr 61" in r2.text  # 61st commander lands on page 2
+    assert "page=1" in r2.text  # a live "prev" link back
 
 
 def test_commanders_search_filters(client):
@@ -361,12 +383,11 @@ def test_commanders_search_filters(client):
     assert "Edgar Markov" not in r.text  # filtered out by the query
 
 
-def test_commanders_paginates(client):
-    r1 = client.get("/commanders", params={"page": 1})
-    assert "Atraxa" in r1.text and "next →" in r1.text
-    r2 = client.get("/commanders", params={"page": 2})
-    assert "The Ur-Dragon" in r2.text  # third commander lands on page 2
-    assert "prev" in r2.text
+def test_commanders_search_paginates(client):
+    r1 = client.get("/commanders", params={"q": "a", "page": 1})
+    assert "page=2" in r1.text  # more matches than the fake's 2-per-page
+    r2 = client.get("/commanders", params={"q": "a", "page": 2})
+    assert "page=1" in r2.text  # prev link back to page 1
 
 
 def test_commanders_empty_result_shows_message(client):

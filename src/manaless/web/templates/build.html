@@ -4,7 +4,7 @@
   <div class="cmd">
     <a href="/" class="back">←</a>
     <strong>{{ deck.commanders | map(attribute='name') | join(' & ') }}</strong>
-    <span class="muted">{{ deck.total_cards }} cards</span>
+    {% include "_count.html" %}
   </div>
   <div class="actions">
     <a href="/build/export.dck" class="btn">⬇ Export .dck</a>
@@ -16,7 +16,7 @@
   </div>
 </div>
 
-<div id="flash" class="flash">{% if error %}{{ error }}{% endif %}</div>
+<div id="flash" class="flash {{ flash_kind }}">{% if flash %}{{ flash }}{% endif %}</div>
 
 <div class="layout">
   <div class="left">
@@ -26,5 +26,10 @@
     <div id="readouts">{% include "_readouts.html" %}</div>
     <div id="palette">{% include "_palette.html" %}</div>
   </aside>
+</div>
+
+{# Full-size card image modal (E1); populated + toggled by ui.js on card click. #}
+<div id="cardmodal" class="cardmodal" hidden>
+  <img alt="">
 </div>
 {% endblock %}

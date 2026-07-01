@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="back"><a href="/">← home</a></p>
+<h1>{% if q %}Commanders matching “{{ q }}”{% else %}Popular commanders{% endif %}</h1>
+
+<form method="get" action="/commanders" class="search cmdsearch">
+  <input type="text" name="q" value="{{ q }}" autocomplete="off" autofocus
+         placeholder="Search commanders — e.g. Atraxa, Edgar, dragons"
+         data-autocomplete="commander">
+  <button type="submit">Search</button>
+</form>
+
+{% if names %}
+  <p class="muted">
+    {% if q %}{{ total }} match(es){% else %}{{ total }} commanders{% endif %},
+    EDHREC-ranked · page {{ page }}
+  </p>
+  <ul class="cmdlist">
+    {% for name in names %}
+    <li>
+      <a class="cmdpick" href="/decks?commander={{ name | urlencode }}">{{ name }}</a>
+      <span class="muted">browse decks →</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <nav class="pager">
+    {% if has_prev %}
+    <a class="btn ghost" href="/commanders?q={{ q | urlencode }}&page={{ page - 1 }}">← prev</a>
+    {% else %}<span class="btn ghost disabled">← prev</span>{% endif %}
+    <span class="muted">page {{ page }}</span>
+    {% if has_next %}
+    <a class="btn ghost" href="/commanders?q={{ q | urlencode }}&page={{ page + 1 }}">next →</a>
+    {% else %}<span class="btn ghost disabled">next →</span>{% endif %}
+  </nav>
+{% else %}
+  <p class="warn">
+    No commanders found{% if q %} for “{{ q }}”{% endif %}. Try a different spelling
+    or a broader term.
+  </p>
+{% endif %}
+{% endblock %}

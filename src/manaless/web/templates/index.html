@@ -7,11 +7,14 @@
     decklists, substitute freely, and watch the win conditions and bracket update
     live — then export to XMage and play.
   </p>
-  <form method="get" action="/decks" class="search">
-    <input type="text" name="commander" autofocus required autocomplete="off"
+  <form method="get" action="/commanders" class="search">
+    <input type="text" name="q" autofocus autocomplete="off" data-autocomplete="commander"
            placeholder="Commander name — e.g. Atraxa, Praetors' Voice">
-    <button type="submit">Browse decks →</button>
+    <button type="submit">Find commander →</button>
   </form>
-  <p class="muted"><a href="/collection">Import your collection →</a></p>
+  <p class="muted">
+    <a href="/commanders">Browse popular commanders →</a> ·
+    <a href="/collection">Import your collection →</a>
+  </p>
 </section>
 {% endblock %}

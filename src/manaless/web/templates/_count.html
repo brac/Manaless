@@ -1,0 +1,5 @@
+{# Deck size, OOB-swapped so it re-renders on every edit even though it lives in
+   the topbar outside #cardlist (fixes B1/B2's stale "100"). A legal Commander
+   deck is 100 incl. the commander; flag anything over so the user trims (B2). #}
+<span id="cardcount" class="muted count" hx-swap-oob="true">{{ deck.total_cards }} cards{% if deck.total_cards > 100 %}
+  <span class="over" title="Trim to 100 before exporting to XMage">⚠ over 100 — trim before export</span>{% endif %}</span>

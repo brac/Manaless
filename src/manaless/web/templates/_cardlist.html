@@ -7,6 +7,33 @@
   {% if missing_count %}<a href="/build/buy-missing">{{ missing_count }} to buy →</a>{% else %}you have the whole deck 🎉{% endif %}</p>
 {% endif %}
 
+{# Commander(s) first (E3): the fixed heart of the deck — no swap/remove controls,
+   since substituting the commander would be a different deck entirely. #}
+{% if deck.commanders %}
+<section class="cat">
+  <h3>Commander <span class="muted">({{ deck.commanders | length }})</span></h3>
+  <div class="grid">
+    {% for card in deck.commanders %}
+    <div class="card commander{% if not card.resolved %} unresolved{% endif %}">
+      {% if card.image_url %}
+        <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
+      {% else %}
+        <div class="noimg">{{ card.name }}</div>
+      {% endif %}
+      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
+        {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
+      </div>
+      <div class="cardctl">
+        <span class="cmd-tag" title="Your commander — export includes it">★ commander</span>
+        <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
+           title="Buy on TCGplayer">$</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 {% for category, cards in deck.categorized().items() %}
 <section class="cat">
   <h3>{{ category }} <span class="muted">({{ cards | sum(attribute='quantity') }})</span></h3>
@@ -32,7 +59,8 @@
         <form class="swap" hx-post="/build/substitute" hx-target="#cardlist" hx-swap="outerHTML"
               hx-indicator="#global-spinner">
           <input type="hidden" name="old_name" value="{{ card.name }}">
-          <input type="text" name="new_name" placeholder="swap to…" autocomplete="off">
+          <input type="text" name="new_name" placeholder="swap to…" autocomplete="off"
+                 data-autocomplete="card">
         </form>
         <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
            title="Buy on TCGplayer">$</a>

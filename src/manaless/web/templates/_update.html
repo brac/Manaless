@@ -1,6 +1,8 @@
 {# HTMX response for an edit: replace #cardlist (primary target), and OOB-swap the
-   readouts panel + flash banner so a single request updates all three. #}
+   readouts panel, substitution palette, topbar card count, and flash banner so a
+   single request updates all of them. #}
 <div id="cardlist">{% include "_cardlist.html" %}</div>
 <div id="readouts" hx-swap-oob="true">{% include "_readouts.html" %}</div>
 <div id="palette" hx-swap-oob="true">{% include "_palette.html" %}</div>
-<div id="flash" class="flash" hx-swap-oob="true">{% if error %}{{ error }}{% endif %}</div>
+{% include "_count.html" %}
+<div id="flash" class="flash {{ flash_kind }}" hx-swap-oob="true">{% if flash %}{{ flash }}{% endif %}</div>

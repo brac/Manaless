@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -33,7 +33,11 @@ from manaless.edhrec_client import EdhrecClient
 from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
 from manaless.paths import CACHE_DIR, PROJECT_ROOT
-from manaless.scryfall_client import get_collection
+from manaless.scryfall_client import (
+    autocomplete_names,
+    get_collection,
+    search_commanders,
+)
 from manaless.web.readout import compute_readouts
 from manaless.web.session import COOKIE_NAME, BuildSession, SessionStore
 
@@ -53,6 +57,9 @@ async def lifespan(app: FastAPI):
     app.state.http = http
     app.state.edhrec = EdhrecClient(http)
     app.state.enrich = lambda names: get_collection(http, names)[0]
+    # Scryfall name lookups: card type-ahead (swap box) + commander browse/search.
+    app.state.autocomplete = lambda query: autocomplete_names(http, query)
+    app.state.search_commanders = lambda query, page: search_commanders(http, query, page)
     app.state.sessions = SessionStore()
     app.state.collection_path = COLLECTION_PATH
     app.state.collection = Collection.load(COLLECTION_PATH)
@@ -84,6 +91,14 @@ def get_store(request: Request) -> SessionStore:
     return request.app.state.sessions
 
 
+def get_autocomplete(request: Request):
+    return request.app.state.autocomplete
+
+
+def get_search(request: Request):
+    return request.app.state.search_commanders
+
+
 def get_owned(request: Request) -> Collection:
     return request.app.state.collection
 
@@ -99,7 +114,9 @@ def _owned_summary(deck, owned: Collection) -> tuple[int, int]:
     return sum(1 for c in deck.cards if owned.owns(c.name)), len(deck.cards)
 
 
-def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) -> dict:
+def _builder_ctx(
+    session: BuildSession, owned: Collection, *, flash: str | None = None, flash_kind: str = ""
+) -> dict:
     have, total = _owned_summary(session.deck, owned)
     return {
         "deck": session.deck,
@@ -110,18 +127,23 @@ def _builder_ctx(session: BuildSession, owned: Collection, error: str | None) ->
         "missing_count": len(deck_diff(session.deck, owned)),
         "popularity": session.popularity,
         "palette": session.popularity.excluding(session.deck.card_names())[:PALETTE_LIMIT],
-        "error": error,
+        # ``flash`` is the transient toast; ``flash_kind`` styles it ("ok" for a
+        # success like "Added X", "" for the default warn tone used by errors).
+        "flash": flash,
+        "flash_kind": flash_kind,
     }
 
 
-def _render_builder(request, session, owned, *, error=None):
+def _render_builder(request, session, owned, *, flash=None, flash_kind=""):
     """Full builder page for ``GET /build`` and the initial ``POST /build``."""
-    return templates.TemplateResponse(request, "build.html", _builder_ctx(session, owned, error))
+    ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind)
+    return templates.TemplateResponse(request, "build.html", ctx)
 
 
-def _render_update(request, session, owned, *, error=None):
-    """HTMX fragment: new card list (primary target) + OOB readouts + flash."""
-    return templates.TemplateResponse(request, "_update.html", _builder_ctx(session, owned, error))
+def _render_update(request, session, owned, *, flash=None, flash_kind=""):
+    """HTMX fragment: card list + OOB readouts + OOB card count + flash."""
+    ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind)
+    return templates.TemplateResponse(request, "_update.html", ctx)
 
 
 def _recompute_into(session: BuildSession, http: HttpClient, deck) -> None:
@@ -134,6 +156,64 @@ def _recompute_into(session: BuildSession, http: HttpClient, deck) -> None:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
+
+
+# How many EDHREC-ranked commanders to show per browse page (E2).
+COMMANDER_PAGE_SIZE = 60  # Scryfall search returns 175/page; we slice for a tidy grid.
+
+
+@app.get("/commanders", response_class=HTMLResponse)
+def commanders(
+    request: Request,
+    q: str = "",
+    page: int = 1,
+    search=Depends(get_search),
+):
+    """Paginated, EDHREC-ranked commander browser + fuzzy search (E2/E5).
+
+    An empty ``q`` lists the most-played commanders; a query fuzzy-matches. Both
+    page through the full pool. Each result links to that commander's deck picker.
+    """
+    q = q.strip()
+    page = max(1, page)
+    result = search(q, page)
+    names = list(result.names[:COMMANDER_PAGE_SIZE])
+    # ``has_more`` is Scryfall's flag for the *full* 175-row page; if we sliced
+    # below that, there's more to show on the next page regardless.
+    has_more = result.has_more or len(result.names) > COMMANDER_PAGE_SIZE
+    return templates.TemplateResponse(
+        request,
+        "commanders.html",
+        {
+            "q": q,
+            "page": page,
+            "names": names,
+            "total": result.total,
+            "has_prev": page > 1,
+            "has_next": has_more,
+        },
+    )
+
+
+@app.get("/api/autocomplete", response_class=JSONResponse)
+def api_autocomplete(
+    request: Request,
+    q: str = "",
+    kind: str = "card",
+    autocomplete=Depends(get_autocomplete),
+    search=Depends(get_search),
+):
+    """Name suggestions for the type-ahead widgets (E5/E6): ``["Name", ...]``.
+
+    ``kind=card`` uses Scryfall's card autocomplete (the swap box); ``kind=
+    commander`` returns EDHREC-ranked commander matches (the browse search box).
+    """
+    q = q.strip()
+    if not q:
+        return JSONResponse([])
+    if kind == "commander":
+        return JSONResponse(list(search(q, 1).names[:10]))
+    return JSONResponse(autocomplete(q)[:10])
 
 
 # Deck-picker sort options: key -> (label, row field, reverse). Only fields the
@@ -252,15 +332,19 @@ def substitute(
         return RedirectResponse("/", status_code=303)
     new_name = new_name.strip()
     if not new_name:
-        return _render_update(request, session, owned, error="Enter a card name to swap in.")
+        return _render_update(request, session, owned, flash="Enter a card name to swap in.")
     with session.lock:
         try:
             deck = substitute_card(enrich, session.deck, old_name, new_name)
         except KeyError:
-            return _render_update(request, session, owned, error=f"{old_name!r} is not in the deck.")
+            return _render_update(request, session, owned, flash=f"{old_name!r} is not in the deck.")
         _recompute_into(session, http, deck)
-        error = _unresolved_note(deck, new_name)
-        return _render_update(request, session, owned, error=error)
+        note = _unresolved_note(deck, new_name)
+        if note:
+            return _render_update(request, session, owned, flash=note)
+        return _render_update(
+            request, session, owned, flash=f"Swapped in {new_name}", flash_kind="ok"
+        )
 
 
 @app.post("/build/remove", response_class=HTMLResponse)
@@ -278,9 +362,11 @@ def remove(
         try:
             deck = session.deck.remove(name)
         except KeyError:
-            return _render_update(request, session, owned, error=f"{name!r} is not in the deck.")
+            return _render_update(request, session, owned, flash=f"{name!r} is not in the deck.")
         _recompute_into(session, http, deck)
-        return _render_update(request, session, owned)
+        # No name in the toast: the card visibly leaves the list and the count
+        # ticks down, and a name here would read as if it were still present.
+        return _render_update(request, session, owned, flash="Removed 1 card", flash_kind="ok")
 
 
 @app.post("/build/add", response_class=HTMLResponse)
@@ -295,10 +381,14 @@ def add(
     session = store.get(request.cookies.get(COOKIE_NAME))
     if session is None:
         return RedirectResponse("/", status_code=303)
+    name = name.strip()
     with session.lock:
-        deck = add_card(enrich, session.deck, name.strip())
+        deck = add_card(enrich, session.deck, name)
         _recompute_into(session, http, deck)
-        return _render_update(request, session, owned, error=_unresolved_note(deck, name.strip()))
+        note = _unresolved_note(deck, name)
+        if note:
+            return _render_update(request, session, owned, flash=note)
+        return _render_update(request, session, owned, flash=f"Added {name}", flash_kind="ok")
 
 
 @app.post("/build/reset")

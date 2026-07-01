@@ -12,13 +12,16 @@ from manaless.collection import Collection
 from manaless.edhrec_client import CardPopularity, PopularityIndex
 from manaless.scryfall_client import ScryfallCard
 from manaless.spellbook_client import BracketEstimate, Combo, ComboResults
+from manaless.scryfall_client import CommanderSearch
 from manaless.web.app import (
     app,
+    get_autocomplete,
     get_collection_path,
     get_edhrec,
     get_enrich,
     get_http,
     get_owned,
+    get_search,
 )
 
 
@@ -53,6 +56,22 @@ def _enrich(names):
     return {n: _meta(n) for n in names if n != "Bogus Card"}
 
 
+# A tiny fake commander pool, EDHREC-ranked, paged 2-per-page so tests can walk
+# pagination without needing 60+ names.
+_COMMANDERS = ["Atraxa, Praetors' Voice", "Edgar Markov", "The Ur-Dragon", "Yuriko"]
+
+
+def _fake_search(query, page):
+    pool = [c for c in _COMMANDERS if query.casefold() in c.casefold()] if query else _COMMANDERS
+    start = (page - 1) * 2
+    window = pool[start : start + 2]
+    return CommanderSearch(names=tuple(window), has_more=start + 2 < len(pool), total=len(pool))
+
+
+def _fake_autocomplete(query):
+    return [c for c in ["Counterspell", "Counterflux", "Sol Ring"] if query.casefold() in c.casefold()]
+
+
 @pytest.fixture
 def owned():
     """The owned-cards Collection the app sees; tests may mutate it before building."""
@@ -70,6 +89,8 @@ def client(monkeypatch, tmp_path, owned):
     app.dependency_overrides[get_enrich] = lambda: _enrich
     app.dependency_overrides[get_owned] = lambda: owned
     app.dependency_overrides[get_collection_path] = lambda: tmp_path / "collection.json"
+    app.dependency_overrides[get_search] = lambda: _fake_search
+    app.dependency_overrides[get_autocomplete] = lambda: _fake_autocomplete
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -270,3 +291,102 @@ def test_buy_missing_without_session_redirects_home(client):
     client.cookies.clear()
     r = client.get("/build/buy-missing", follow_redirects=False)
     assert r.status_code == 303
+
+
+# --- B1/B2: card count re-renders on every edit -------------------------
+
+def test_build_shows_card_count(client):
+    r = _build(client)
+    assert 'id="cardcount"' in r.text
+    assert "3 cards" in r.text  # commander + Sol Ring + Counterspell
+
+
+def test_edit_oob_swaps_the_card_count(client):
+    _build(client)
+    r = client.post("/build/add", data={"name": "Smothering Tithe"})
+    # count fragment is in the edit response, marked for OOB swap, and reflects +1
+    assert 'id="cardcount"' in r.text and "hx-swap-oob" in r.text
+    assert "4 cards" in r.text
+
+
+def test_remove_decrements_card_count(client):
+    _build(client)
+    r = client.post("/build/remove", data={"name": "Counterspell"})
+    assert "2 cards" in r.text
+
+
+# --- B3: adds/subs are made obvious with a toast ------------------------
+
+def test_add_shows_added_toast(client):
+    _build(client)
+    r = client.post("/build/add", data={"name": "Smothering Tithe"})
+    assert "Added Smothering Tithe" in r.text
+    assert 'class="flash ok"' in r.text  # success styling, not a warning
+
+
+def test_substitute_shows_swapped_toast(client):
+    _build(client)
+    r = client.post("/build/substitute", data={"old_name": "Sol Ring", "new_name": "Arcane Signet"})
+    assert "Swapped in Arcane Signet" in r.text
+
+
+# --- E3: commander listed first in the builder --------------------------
+
+def test_commander_listed_first_in_builder(client):
+    r = _build(client)
+    assert "★ commander" in r.text  # commander tile marker present
+    # the commander appears before the mainboard cards in the list
+    assert r.text.index("Atraxa") < r.text.index("Sol Ring")
+
+
+# --- E6: swap box carries autocomplete hook -----------------------------
+
+def test_swap_input_has_autocomplete_attr(client):
+    r = _build(client)
+    assert 'data-autocomplete="card"' in r.text
+
+
+# --- E2/E5: paginated commander browse + fuzzy search -------------------
+
+def test_commanders_lists_popular(client):
+    r = client.get("/commanders")
+    assert r.status_code == 200
+    assert "Atraxa" in r.text and "Edgar Markov" in r.text
+    assert "/decks?commander=" in r.text  # each links to its deck picker
+
+
+def test_commanders_search_filters(client):
+    r = client.get("/commanders", params={"q": "dragon"})
+    assert "The Ur-Dragon" in r.text
+    assert "Edgar Markov" not in r.text  # filtered out by the query
+
+
+def test_commanders_paginates(client):
+    r1 = client.get("/commanders", params={"page": 1})
+    assert "Atraxa" in r1.text and "next →" in r1.text
+    r2 = client.get("/commanders", params={"page": 2})
+    assert "The Ur-Dragon" in r2.text  # third commander lands on page 2
+    assert "prev" in r2.text
+
+
+def test_commanders_empty_result_shows_message(client):
+    r = client.get("/commanders", params={"q": "zzznope"})
+    assert "No commanders found" in r.text
+
+
+# --- E5/E6: autocomplete JSON endpoint ----------------------------------
+
+def test_api_autocomplete_card(client):
+    r = client.get("/api/autocomplete", params={"q": "counter", "kind": "card"})
+    assert r.status_code == 200
+    assert r.json() == ["Counterspell", "Counterflux"]
+
+
+def test_api_autocomplete_commander(client):
+    r = client.get("/api/autocomplete", params={"q": "dragon", "kind": "commander"})
+    assert r.json() == ["The Ur-Dragon"]
+
+
+def test_api_autocomplete_empty_query(client):
+    r = client.get("/api/autocomplete", params={"q": "", "kind": "card"})
+    assert r.json() == []

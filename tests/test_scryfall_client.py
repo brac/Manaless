@@ -9,8 +9,10 @@ from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
 from manaless.scryfall_client import (
     ScryfallCardNotFound,
+    autocomplete_names,
     get_card_metadata,
     get_collection,
+    search_commanders,
 )
 
 
@@ -167,3 +169,76 @@ def test_get_collection_chunks_over_75(tmp_path):
     by_name, not_found = get_collection(http, names)
     assert len(by_name) == 80 and not_found == []
     assert batch_sizes == [75, 5]  # split into 75 + 5, never exceeding the cap
+
+
+# --- autocomplete (E6) ----------------------------------------------------
+
+
+def test_autocomplete_returns_names(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(200, json={"data": ["Counterspell", "Counterflux"]}))
+    assert autocomplete_names(http, "counter") == ["Counterspell", "Counterflux"]
+
+
+def test_autocomplete_short_query_skips_request(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"data": []})
+
+    http = _http(tmp_path, handler)
+    assert autocomplete_names(http, "c") == []  # < 2 chars
+    assert calls["n"] == 0  # never hit the network
+
+
+def test_autocomplete_is_cached_by_query(tmp_path):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"data": ["Sol Ring"]})
+
+    http = _http(tmp_path, handler)
+    autocomplete_names(http, "sol")
+    autocomplete_names(http, "SOL")  # same case-folded key -> served from cache
+    assert calls["n"] == 1
+
+
+# --- commander search (E2/E5) ---------------------------------------------
+
+
+def _search_page(names, has_more=False, total=None):
+    return {
+        "data": [{"name": n} for n in names],
+        "has_more": has_more,
+        "total_cards": total if total is not None else len(names),
+    }
+
+
+def test_search_commanders_parses_names_and_paging(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(200, json=_search_page(
+        ["Atraxa, Praetors' Voice", "Edgar Markov"], has_more=True, total=42)))
+    result = search_commanders(http, "atra", page=1)
+    assert result.names == ("Atraxa, Praetors' Voice", "Edgar Markov")
+    assert result.has_more is True
+    assert result.total == 42
+
+
+def test_search_commanders_sends_commander_filter_and_order(tmp_path):
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json=_search_page(["X"]))
+
+    http = _http(tmp_path, handler)
+    search_commanders(http, "dragons", page=2)
+    assert "is%3Acommander" in seen["url"] or "is:commander" in seen["url"]
+    assert "order=edhrec" in seen["url"]
+    assert "page=2" in seen["url"]
+
+
+def test_search_commanders_404_is_empty_page(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(404, json={"object": "error"}))
+    result = search_commanders(http, "zzzznotacommander")
+    assert result.names == () and result.has_more is False and result.total == 0

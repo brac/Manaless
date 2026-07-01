@@ -94,12 +94,15 @@ select:focus { outline: 2px solid var(--accent); }
   display: flex;
   flex-direction: column;
   gap: .35rem;
+  transition: box-shadow .15s ease;  /* combo outlines fade in when readouts land */
 }
 .card.unresolved { border-color: var(--warn); }
 .card img { width: 100%; border-radius: 6px; display: block; }
 .card .noimg { aspect-ratio: 5/7; display: grid; place-items: center; text-align: center; padding: .4rem; background: var(--panel2); border-radius: 6px; font-size: .8rem; }
 .cardname { font-size: .82rem; line-height: 1.25; }
-.cardctl { display: flex; gap: .3rem; }
+/* margin-top:auto pins the controls to the card's bottom so they line up across a
+   row whether or not a card shows the (conditional) popularity bar. */
+.cardctl { display: flex; gap: .3rem; margin-top: auto; }
 .rm { background: var(--panel2); color: var(--muted); padding: .25rem .5rem; }
 .rm:hover { background: var(--bad); color: #1a0000; }
 .buy { background: var(--panel2); color: var(--good); border: 1px solid var(--border); border-radius: 7px; padding: .25rem .5rem; font-weight: 700; display: grid; place-items: center; }
@@ -133,6 +136,8 @@ select:focus { outline: 2px solid var(--accent); }
 .reasons { margin: .5rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .85rem; }
 .combos, .addone { margin: .3rem 0; padding-left: 0; list-style: none; }
 .combos li, .addone li { padding: .2rem 0; border-bottom: 1px solid var(--border); font-size: .88rem; }
+/* Colour swatch tying a combo line to the outline ui.js draws on its cards. */
+.combo-dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; margin-right: .45em; vertical-align: middle; background: var(--muted); flex: none; }
 .add { background: var(--good); color: #042417; padding: .15rem .5rem; font-size: .82rem; }
 .addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: none; }
 .addlist li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }

@@ -14,7 +14,7 @@
   <h3>Commander <span class="muted">({{ deck.commanders | length }})</span></h3>
   <div class="grid">
     {% for card in deck.commanders %}
-    <div class="card commander{% if not card.resolved %} unresolved{% endif %}">
+    <div class="card commander{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">
       {% if card.image_url %}
         <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
       {% else %}
@@ -39,7 +39,7 @@
   <h3>{{ category }} <span class="muted">({{ cards | sum(attribute='quantity') }})</span></h3>
   <div class="grid">
     {% for card in cards %}
-    <div class="card{% if not card.resolved %} unresolved{% endif %}">
+    <div class="card{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">
       {% if card.image_url %}
         <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
       {% else %}

@@ -69,6 +69,72 @@
     }
   });
 
+  // --- 1c. combo outlines -------------------------------------------------
+  // Each combo present in the deck gets a colour; every card in that combo gets a
+  // ring in it (stacked outward, so a card in N combos shows N rings). The combo
+  // data rides in with the lazily-loaded readouts panel (#combo-data), so we re-run
+  // on every htmx settle: after an edit the card list re-renders bare, then the
+  // readouts refetch lands and re-draws the outlines.
+  var COMBO_COLORS = ["#ff79c6", "#ffb86c", "#bd93f9", "#8be9fd", "#50fa7b", "#f1fa8c"];
+
+  function comboKey(name) {
+    // Front-face, case-folded — matches how the deck reconciles DFC/combo names.
+    return (name || "").split("//")[0].trim().toLowerCase();
+  }
+
+  function applyComboOutlines() {
+    var cards = document.querySelectorAll("#cardlist .card");
+    cards.forEach(function (card) {
+      card.style.boxShadow = "";
+      if (card.classList.contains("in-combo")) {
+        card.classList.remove("in-combo");
+        card.removeAttribute("title");
+      }
+    });
+    var dataEl = document.getElementById("combo-data");
+    if (!dataEl) return;
+    var combos;
+    try {
+      combos = JSON.parse(dataEl.textContent || "[]");
+    } catch (err) {
+      return;
+    }
+    var byName = {}; // front-face key -> [{color, combo}]
+    combos.forEach(function (combo, i) {
+      var color = COMBO_COLORS[i % COMBO_COLORS.length];
+      var dot = document.querySelector('.combo-line[data-combo-index="' + i + '"] .combo-dot');
+      if (dot) dot.style.background = color;
+      (combo.cards || []).forEach(function (name) {
+        var key = comboKey(name);
+        (byName[key] || (byName[key] = [])).push({ color: color, combo: combo });
+      });
+    });
+    cards.forEach(function (card) {
+      var hits = byName[comboKey(card.getAttribute("data-name"))];
+      if (!hits || !hits.length) return;
+      card.style.boxShadow = hits
+        .slice(0, 4) // cap the rings so they never spill into neighbouring cards
+        .map(function (h, idx) {
+          return "0 0 0 " + 2 * (idx + 1) + "px " + h.color;
+        })
+        .join(", ");
+      card.classList.add("in-combo");
+      card.title =
+        "In combo:\n" +
+        hits
+          .map(function (h) {
+            var line = (h.combo.cards || []).join(" + ");
+            if (h.combo.produces && h.combo.produces.length) {
+              line += " → " + h.combo.produces.join(", ");
+            }
+            return line;
+          })
+          .join("\n");
+    });
+  }
+
+  document.body.addEventListener("htmx:afterSettle", applyComboOutlines);
+
   // --- 1b. hover card preview (palette add buttons) ----------------------
   var preview = document.getElementById("cardpreview");
 

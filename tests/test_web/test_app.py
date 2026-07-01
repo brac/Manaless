@@ -181,6 +181,42 @@ def test_build_readouts_without_session_redirects_home(client):
     assert r.status_code == 303
 
 
+# --- combo outline indicators -------------------------------------------
+
+def test_cardlist_cards_carry_data_name(client):
+    # ui.js keys combo outlines off data-name; every mainboard + commander tile has it.
+    r = _build(client)
+    assert 'data-name="Sol Ring"' in r.text
+    assert 'data-name="Atraxa, Praetors' in r.text  # commander tile too (apostrophe HTML-escaped)
+
+
+def test_readouts_emit_combo_data_for_present_combo(client, monkeypatch):
+    # A combo whose cards are all in the deck -> shows in the panel with a colour dot
+    # and a #combo-data payload ui.js uses to outline those cards.
+    combo = Combo(
+        id="1", cards=("Sol Ring", "Counterspell"), produces=("Infinite mana",),
+        popularity=100, bracket_tag="S",
+    )
+    monkeypatch.setattr(
+        readout_mod, "find_my_combos",
+        lambda http, deck: ComboResults("WUBRG", (combo,), ()),
+    )
+    _build(client)
+    r = client.get("/build/readouts")
+    assert r.status_code == 200
+    assert 'id="combo-data"' in r.text and 'class="combo-dot"' in r.text
+    assert 'data-combo-index="0"' in r.text
+    assert "Sol Ring + Counterspell" in r.text  # panel line
+    assert '"cards"' in r.text and "Infinite mana" in r.text  # JSON payload for ui.js
+
+
+def test_readouts_without_combos_emit_no_combo_data(client):
+    # The client fixture's fake returns no combos -> no outline payload.
+    _build(client)
+    r = client.get("/build/readouts")
+    assert 'id="combo-data"' not in r.text
+
+
 def test_build_shows_card_popularity(client):
     r = _build(client)
     assert "85%" in r.text  # Sol Ring inclusion from the commander page

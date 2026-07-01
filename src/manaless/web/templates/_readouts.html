@@ -24,12 +24,18 @@
   {% if w.combo_completeness %}<p class="muted">Closest combo: {{ w.combo_completeness }}</p>{% endif %}
 
   {% if w.combos %}
+  {% set shown = w.combos[:8] %}
   <h3>Combos present ({{ w.combos | length }})</h3>
+  {# Each line's dot colour is set by ui.js to match the outline it draws on the
+     combo's cards in the list. The combo-data JSON below feeds that outlining. #}
   <ul class="combos">
-    {% for c in w.combos[:8] %}
-    <li>{{ c.cards | join(' + ') }} → {{ c.produces | join(', ') }} <span class="muted">(pop {{ c.popularity }})</span></li>
+    {% for c in shown %}
+    <li class="combo-line" data-combo-index="{{ loop.index0 }}"><span class="combo-dot"></span>{{ c.cards | join(' + ') }} → {{ c.produces | join(', ') }} <span class="muted">(pop {{ c.popularity }})</span></li>
     {% endfor %}
   </ul>
+  <script type="application/json" id="combo-data">[
+{% for c in shown %}{"cards": {{ c.cards | list | tojson }}, "produces": {{ c.produces | list | tojson }}}{% if not loop.last %},{% endif %}
+{% endfor %}]</script>
   {% endif %}
 
   {% if w.add_one %}

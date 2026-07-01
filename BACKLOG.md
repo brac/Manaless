@@ -116,3 +116,11 @@ is the one option to avoid.
 **Resolved:** kept the box, added Scryfall type-ahead
 (`/api/autocomplete?kind=card`, `data-autocomplete="card"` + `ui.js`); pick a
 suggestion to submit the swap.
+
+
+## Suggest Replacments during deck buildling
+If I want to swap out 4 creatures or ramp I want to have 4 creature or ramp suggestions that come from the syngeristic cards with that commander deck. I don't want to have to swap one for one, but in the suggestions area we could have a suggestion section that is specifically to replace the same kind of cards that were just removed during deck building. AND the swap to input could be a button, clicking opens a little model that has the input text area for the same fuzzy search input functionlatiy but it also has a list of the same kinds of card that has a high inclusion with this commander, synergistically. Catagories like Ramp Removal Draw, etc sould be the goal if you can figure iut out but otherwise skryfall type is fine. We want to be sure to replace category for category, not just pure type. 
+
+
+## Scroll in the info bar
+On the info bar on the right, with the bracket number, combos and cards frequently included, I can't scroll that without going to the bottom of the card list page as well. Please make that scrollable column on the right indpendently scrollable. 

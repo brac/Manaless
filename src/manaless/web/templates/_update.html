@@ -1,8 +1,9 @@
 {# HTMX response for an edit: replace #cardlist (primary target), and OOB-swap the
-   readouts panel, substitution palette, topbar card count, and flash banner so a
-   single request updates all of them. #}
+   substitution palette, topbar card count, flash banner, and a fresh readouts
+   placeholder (which lazily refetches /build/readouts) — one request updates all
+   of them, and the readouts recompute off the critical path so the edit is fast. #}
 <div id="cardlist">{% include "_cardlist.html" %}</div>
-<div id="readouts" hx-swap-oob="true">{% include "_readouts.html" %}</div>
+{% with oob=True %}{% include "_readouts_lazy.html" %}{% endwith %}
 <div id="palette" hx-swap-oob="true">{% include "_palette.html" %}</div>
 {% include "_count.html" %}
 <div id="flash" class="flash {{ flash_kind }}" hx-swap-oob="true">{% if flash %}{{ flash }}{% endif %}</div>

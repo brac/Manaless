@@ -139,6 +139,16 @@ select:focus { outline: 2px solid var(--accent); }
 .addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: 420px; overflow-y: auto; }
 .addlist li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }
 .addlist .add { flex: 1; text-align: left; }
+.type-tag {
+  font-size: .62rem; font-weight: 700; letter-spacing: .04em;
+  color: var(--muted); background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 4px; padding: .05rem .3rem; white-space: nowrap; flex: none;
+}
+
+/* --- hover card preview (palette) --- */
+.cardpreview { position: absolute; z-index: 55; pointer-events: none; }
+.cardpreview[hidden] { display: none; }
+.cardpreview img { width: 300px; max-width: 44vw; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); display: block; }
 
 /* --- topbar card count + over-100 hint (B1/B2) --- */
 .count .over { color: var(--warn); margin-left: .3rem; white-space: nowrap; }
@@ -176,6 +186,15 @@ select:focus { outline: 2px solid var(--accent); }
 .cmdpick { font-weight: 600; }
 .pager { display: flex; gap: .8rem; align-items: center; margin: 1.2rem 0; }
 .btn.disabled { opacity: .4; pointer-events: none; }
+
+/* --- lazy readouts loading state --- */
+.readouts-loading { color: var(--muted); display: flex; align-items: center; gap: .5rem; }
+.readouts-loading .spin {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite; flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* --- spinner --- */
 #global-spinner {

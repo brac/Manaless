@@ -114,19 +114,58 @@ def _owned_summary(deck, owned: Collection) -> tuple[int, int]:
     return sum(1 for c in deck.cards if owned.owns(c.name)), len(deck.cards)
 
 
+# Primary card type -> short tag shown on palette suggestions. Same precedence as
+# DeckModel's categoriser (first match on the front-face type line wins).
+_TYPE_ABBR: tuple[tuple[str, str], ...] = (
+    ("Creature", "CRE"),
+    ("Planeswalker", "PLW"),
+    ("Battle", "BAT"),
+    ("Instant", "INS"),
+    ("Sorcery", "SOR"),
+    ("Artifact", "ART"),
+    ("Enchantment", "ENC"),
+    ("Land", "LND"),
+)
+
+
+def _type_tag(type_line: str) -> tuple[str, str]:
+    """``(abbreviation, full-type)`` for a palette card, or ``("", "")`` if unknown."""
+    front = (type_line or "").split("//", 1)[0]
+    for full, abbr in _TYPE_ABBR:
+        if full in front:
+            return abbr, full
+    return ("", "")
+
+
+def _palette_view(cp, meta) -> dict:
+    """A palette suggestion as the template wants it: popularity + type tag + image."""
+    abbr, full = _type_tag(meta.type_line) if meta else ("", "")
+    return {
+        "name": cp.name,
+        "percent": cp.percent,
+        "num_decks": cp.num_decks,
+        "potential_decks": cp.potential_decks,
+        "type_abbr": abbr,
+        "type_full": full,
+        "image_url": meta.image_url if meta else None,
+    }
+
+
 def _builder_ctx(
     session: BuildSession, owned: Collection, *, flash: str | None = None, flash_kind: str = ""
 ) -> dict:
     have, total = _owned_summary(session.deck, owned)
     return {
         "deck": session.deck,
-        "readouts": session.readouts,
         "owned": owned,
         "owned_have": have,
         "owned_total": total,
         "missing_count": len(deck_diff(session.deck, owned)),
         "popularity": session.popularity,
-        "palette": session.popularity.excluding(session.deck.card_names())[:PALETTE_LIMIT],
+        "palette": [
+            _palette_view(cp, session.palette_meta.get(cp.name))
+            for cp in session.popularity.excluding(session.deck.card_names())[:PALETTE_LIMIT]
+        ],
         # ``flash`` is the transient toast; ``flash_kind`` styles it ("ok" for a
         # success like "Added X", "" for the default warn tone used by errors).
         "flash": flash,
@@ -135,20 +174,21 @@ def _builder_ctx(
 
 
 def _render_builder(request, session, owned, *, flash=None, flash_kind=""):
-    """Full builder page for ``GET /build`` and the initial ``POST /build``."""
+    """Full builder page for ``GET /build`` and the initial ``POST /build``.
+
+    The readouts panel renders as a lazy placeholder that fetches
+    ``/build/readouts`` on load, so the page paints without waiting on Spellbook.
+    """
     ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind)
     return templates.TemplateResponse(request, "build.html", ctx)
 
 
 def _render_update(request, session, owned, *, flash=None, flash_kind=""):
-    """HTMX fragment: card list + OOB readouts + OOB card count + flash."""
+    """HTMX fragment for an edit: card list + OOB {palette, count, flash} + an OOB
+    lazy readouts placeholder. The edit returns instantly; readouts recompute in a
+    follow-up ``/build/readouts`` request rather than blocking the click."""
     ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind)
     return templates.TemplateResponse(request, "_update.html", ctx)
-
-
-def _recompute_into(session: BuildSession, http: HttpClient, deck) -> None:
-    session.deck = deck
-    session.readouts = compute_readouts(http, deck)
 
 
 # --- routes --------------------------------------------------------------
@@ -248,6 +288,9 @@ DECK_SORTS: dict[str, tuple[str, str, bool]] = {
 }
 DECK_LIST_LIMIT = 100  # Atraxa alone has ~42k indexed decks; show the top slice.
 PALETTE_LIMIT = 24  # most-played cards not in the deck, offered as add suggestions.
+# Enrich a bit more than PALETTE_LIMIT once at build time so the palette still has
+# type tags + hover images as removing deck cards rotates new suggestions in.
+PALETTE_META_LIMIT = 80
 
 
 def _sort_deck_rows(rows: list[dict], sort: str) -> list[dict]:
@@ -300,7 +343,6 @@ def build(
     request: Request,
     commander: str = Form(...),
     deck_id: str = Form(...),
-    http: HttpClient = Depends(get_http),
     edhrec: EdhrecClient = Depends(get_edhrec),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
@@ -312,9 +354,15 @@ def build(
         return templates.TemplateResponse(
             request, "decks.html", {"commander": commander, "rows": [], "error": str(exc)}
         )
-    readouts = compute_readouts(http, deck)
+    # Readouts are computed lazily (the page's placeholder fetches /build/readouts),
+    # so the builder paints as soon as the deck is enriched rather than after the
+    # ~2s Spellbook round-trip.
     popularity = edhrec.fetch_commander_card_stats(commander)
-    session = BuildSession(deck=deck, readouts=readouts, popularity=popularity)
+    # Enrich the palette candidates once (one batched, cached Scryfall call) so the
+    # suggestions can show a type tag + hover image with no per-edit network cost.
+    palette_pool = [cp.name for cp in popularity.excluding(deck.card_names())[:PALETTE_META_LIMIT]]
+    palette_meta = enrich(palette_pool) if palette_pool else {}
+    session = BuildSession(deck=deck, popularity=popularity, palette_meta=dict(palette_meta))
     sid = store.new_id()
     store.set(sid, session)
     resp = _render_builder(request, session, owned)
@@ -339,7 +387,6 @@ def substitute(
     request: Request,
     old_name: str = Form(...),
     new_name: str = Form(...),
-    http: HttpClient = Depends(get_http),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
@@ -355,7 +402,7 @@ def substitute(
             deck = substitute_card(enrich, session.deck, old_name, new_name)
         except KeyError:
             return _render_update(request, session, owned, flash=f"{old_name!r} is not in the deck.")
-        _recompute_into(session, http, deck)
+        session.deck = deck  # readouts recompute lazily via /build/readouts
         note = _unresolved_note(deck, new_name)
         if note:
             return _render_update(request, session, owned, flash=note)
@@ -368,7 +415,6 @@ def substitute(
 def remove(
     request: Request,
     name: str = Form(...),
-    http: HttpClient = Depends(get_http),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
 ):
@@ -380,7 +426,7 @@ def remove(
             deck = session.deck.remove(name)
         except KeyError:
             return _render_update(request, session, owned, flash=f"{name!r} is not in the deck.")
-        _recompute_into(session, http, deck)
+        session.deck = deck  # readouts recompute lazily via /build/readouts
         # No name in the toast: the card visibly leaves the list and the count
         # ticks down, and a name here would read as if it were still present.
         return _render_update(request, session, owned, flash="Removed 1 card", flash_kind="ok")
@@ -390,7 +436,6 @@ def remove(
 def add(
     request: Request,
     name: str = Form(...),
-    http: HttpClient = Depends(get_http),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
@@ -401,11 +446,33 @@ def add(
     name = name.strip()
     with session.lock:
         deck = add_card(enrich, session.deck, name)
-        _recompute_into(session, http, deck)
+        session.deck = deck  # readouts recompute lazily via /build/readouts
         note = _unresolved_note(deck, name)
         if note:
             return _render_update(request, session, owned, flash=note)
         return _render_update(request, session, owned, flash=f"Added {name}", flash_kind="ok")
+
+
+@app.get("/build/readouts", response_class=HTMLResponse)
+def build_readouts(
+    request: Request,
+    http: HttpClient = Depends(get_http),
+    store: SessionStore = Depends(get_store),
+):
+    """Compute + render the win-condition/bracket panel for the current deck.
+
+    Fetched lazily by the builder's readouts placeholder (on page load and after
+    every edit), so the ~2s Spellbook round-trip never blocks a click. The result
+    is cached on the session for a plain ``GET /build`` reload.
+    """
+    session = store.get(request.cookies.get(COOKIE_NAME))
+    if session is None:
+        return RedirectResponse("/", status_code=303)
+    readouts = compute_readouts(http, session.deck)
+    session.readouts = readouts
+    return templates.TemplateResponse(
+        request, "_readouts_panel.html", {"readouts": readouts}
+    )
 
 
 @app.post("/build/reset")

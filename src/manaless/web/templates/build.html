@@ -23,13 +23,19 @@
     <div id="cardlist">{% include "_cardlist.html" %}</div>
   </div>
   <aside class="right">
-    <div id="readouts">{% include "_readouts.html" %}</div>
+    {% include "_readouts_lazy.html" %}
     <div id="palette">{% include "_palette.html" %}</div>
   </aside>
 </div>
 
 {# Full-size card image modal (E1); populated + toggled by ui.js on card click. #}
 <div id="cardmodal" class="cardmodal" hidden>
+  <img alt="">
+</div>
+
+{# Hover preview: ui.js shows a card image here while hovering a [data-img] element
+   (e.g. a palette "add" button), positioned next to the cursor. #}
+<div id="cardpreview" class="cardpreview" hidden>
   <img alt="">
 </div>
 {% endblock %}

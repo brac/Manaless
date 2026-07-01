@@ -34,6 +34,36 @@
     if (e.key === "Escape") closeModal();
   });
 
+  // --- 1b. hover card preview (palette add buttons) ----------------------
+  var preview = document.getElementById("cardpreview");
+
+  function positionPreview(e) {
+    if (!preview || preview.hidden) return;
+    var w = preview.offsetWidth || 300;
+    // Prefer the left of the cursor (palette sits on the right edge); flip if tight.
+    var left = e.clientX - w - 18;
+    if (left < 8) left = e.clientX + 18;
+    var top = Math.min(e.clientY - 40, window.innerHeight - (preview.offsetHeight || 400) - 8);
+    preview.style.left = window.scrollX + Math.max(8, left) + "px";
+    preview.style.top = window.scrollY + Math.max(8, top) + "px";
+  }
+
+  document.addEventListener("mouseover", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-img]") : null;
+    if (!el || !preview) return;
+    preview.querySelector("img").src = el.getAttribute("data-img");
+    preview.hidden = false;
+    positionPreview(e);
+  });
+  document.addEventListener("mousemove", positionPreview);
+  document.addEventListener("mouseout", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-img]") : null;
+    if (el && preview && !el.contains(e.relatedTarget)) {
+      preview.hidden = true;
+      preview.querySelector("img").src = "";
+    }
+  });
+
   // --- 2. autocomplete (E5/E6) -------------------------------------------
   var box = document.createElement("ul");
   box.className = "ac-menu";

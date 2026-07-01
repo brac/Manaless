@@ -1,0 +1,8 @@
+{# Readouts placeholder: fetches the real panel from /build/readouts on load, so
+   the ~2s Spellbook round-trip never blocks the page paint or an edit. Rendered
+   directly in build.html (fires on page load) and OOB-swapped after every edit
+   (`oob` true → fires when it lands in the DOM), which also cancels any in-flight
+   readouts request from the previous edit (its trigger element is removed). #}
+<div id="readouts" hx-get="/build/readouts" hx-trigger="load" hx-swap="outerHTML"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <div class="panel readouts-loading"><span class="spin"></span> Computing win conditions + bracket…</div>
+</div>

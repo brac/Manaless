@@ -159,12 +159,26 @@ def test_decks_unknown_sort_falls_back_to_recent(client):
     assert a < b < c
 
 
-def test_build_creates_session_and_renders_readouts(client):
+def test_build_creates_session_and_lazy_loads_readouts(client):
     r = _build(client)
     assert r.status_code == 200
     assert "Sol Ring" in r.text
-    assert "Bracket" in r.text and "Win conditions" in r.text
+    assert 'hx-get="/build/readouts"' in r.text  # readouts fetched lazily, off the critical path
     assert client.cookies.get("manaless_sid")  # session cookie set
+
+
+def test_build_readouts_endpoint_renders_panel(client):
+    _build(client)
+    r = client.get("/build/readouts")
+    assert r.status_code == 200
+    assert "Bracket" in r.text and "Win conditions" in r.text
+    assert 'id="readouts"' in r.text  # replaces the placeholder in place
+
+
+def test_build_readouts_without_session_redirects_home(client):
+    client.cookies.clear()
+    r = client.get("/build/readouts", follow_redirects=False)
+    assert r.status_code == 303
 
 
 def test_build_shows_card_popularity(client):
@@ -177,6 +191,13 @@ def test_build_shows_substitution_palette(client):
     r = _build(client)
     assert "Popular cards to add" in r.text
     assert "Smothering Tithe" in r.text  # popular + not in deck -> offered
+
+
+def test_palette_shows_type_tag_and_hover_image(client):
+    r = _build(client)
+    assert 'class="type-tag"' in r.text  # card-type abbreviation shown
+    assert ">ART<" in r.text  # fake meta type_line "Artifact" -> ART tag
+    assert 'data-img="http://img/Smothering Tithe.png"' in r.text  # hover-preview source
 
 
 def test_palette_drops_card_once_added(client):

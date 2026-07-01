@@ -9,6 +9,7 @@ unit-tests with fakes — same injection pattern as `deck_builder`/`win_conditio
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from manaless.bracket import BracketReadout, evaluate_bracket
@@ -33,11 +34,19 @@ def compute_readouts(http: HttpClient, deck: DeckModel) -> Readouts:
     deck and ``None`` after any substitution (cleared by ``DeckModel.substitute``),
     so passing it straight through gives the right behaviour automatically: trust
     the label until the user edits, then re-infer from ``estimate-bracket``.
-    """
-    combos = find_my_combos(http, deck)
-    win_conditions = evaluate_win_conditions(deck, combos)
 
-    estimate = estimate_bracket(http, deck)
+    The two Spellbook POSTs are independent and each ~1.5–2s on a cache miss (every
+    edit misses, since the decklist hash changes), so they run concurrently on the
+    shared thread-safe ``http`` — roughly halving the wait an edit pays. Module
+    names are looked up at call time so tests' monkeypatches still apply.
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        combos_future = pool.submit(find_my_combos, http, deck)
+        estimate_future = pool.submit(estimate_bracket, http, deck)
+        combos = combos_future.result()
+        estimate = estimate_future.result()
+
+    win_conditions = evaluate_win_conditions(deck, combos)
     bracket = evaluate_bracket(deck, estimate, edhrec_bracket=deck.edhrec_bracket)
 
     return Readouts(win_conditions=win_conditions, bracket=bracket)

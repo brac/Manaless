@@ -15,6 +15,7 @@ from threading import Lock
 
 from manaless.deck_model import DeckModel
 from manaless.edhrec_client import PopularityIndex
+from manaless.scryfall_client import ScryfallCard
 from manaless.web.readout import Readouts
 
 COOKIE_NAME = "manaless_sid"
@@ -25,10 +26,17 @@ class BuildSession:
     """One tab's current build: the deck, its readouts, and commander card stats."""
 
     deck: DeckModel
-    readouts: Readouts
+    # Win-condition + bracket readouts. Computed lazily (the two Spellbook POSTs
+    # cost ~2s), so an edit updates ``deck`` instantly and the readouts panel
+    # fetches ``/build/readouts`` in the background. ``None`` until first computed.
+    readouts: Readouts | None = None
     # Aggregate EDHREC card popularity for this commander; fetched once at build
     # time (it doesn't change as the user substitutes within the same commander).
     popularity: PopularityIndex = field(default_factory=lambda: PopularityIndex({}))
+    # Scryfall metadata (type line + image) for the substitution-palette candidates,
+    # enriched once at build time so the palette can show a card-type tag and a
+    # hover preview without any per-edit network call. Keyed by card name.
+    palette_meta: dict[str, ScryfallCard] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
 

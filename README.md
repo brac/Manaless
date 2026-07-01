@@ -11,6 +11,23 @@ you fell for.
 > [bracket-evaluator](docs/bracket-evaluator.md),
 > [buy-pipeline](docs/buy-pipeline.md).
 
+## Run the web builder
+
+One command — it creates `.venv`, installs deps on first run, then serves the
+builder and opens a browser tab:
+
+```powershell
+./run.ps1              # Windows / PowerShell  (http://127.0.0.1:8000)
+```
+```bash
+./run.sh               # Linux, macOS, or Git Bash on Windows
+```
+
+Options: `./run.ps1 -Port 9000 -Reload -NoBrowser` (PowerShell) or
+`PORT=9000 ./run.sh --reload` (bash). Under the hood both run
+`python -m manaless.web`; first run does `pip install -e ".[web]"`, warm runs
+launch instantly.
+
 ## Status
 
 > **Picking this up fresh? Start with [`docs/HANDOFF.md`](docs/HANDOFF.md)** — it

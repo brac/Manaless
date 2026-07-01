@@ -179,7 +179,18 @@ def commanders(
     """
     q = q.strip()
     page = max(1, page)
-    if q:
+    # Popular browse: prefer EDHREC's deck-count ranking. If EDHREC is momentarily
+    # unavailable (403/network) it returns [], and we fall back to the Scryfall
+    # list below so the browse never dead-ends on "no commanders found".
+    ranked = edhrec.fetch_top_commanders() if not q else []
+    if ranked:
+        total = len(ranked)
+        start = (page - 1) * COMMANDER_PAGE_SIZE
+        window = ranked[start : start + COMMANDER_PAGE_SIZE]
+        items = [{"name": c.name, "decks": c.num_decks} for c in window]
+        has_more = start + COMMANDER_PAGE_SIZE < total
+    else:
+        # Named search, or the fallback when EDHREC's ranking is unavailable.
         result = search(q, page)
         names = list(result.names[:COMMANDER_PAGE_SIZE])
         # ``has_more`` is Scryfall's flag for the *full* page; if we sliced below
@@ -187,13 +198,6 @@ def commanders(
         has_more = result.has_more or len(result.names) > COMMANDER_PAGE_SIZE
         items = [{"name": name, "decks": None} for name in names]
         total = result.total
-    else:
-        ranked = edhrec.fetch_top_commanders()
-        total = len(ranked)
-        start = (page - 1) * COMMANDER_PAGE_SIZE
-        window = ranked[start : start + COMMANDER_PAGE_SIZE]
-        items = [{"name": c.name, "decks": c.num_decks} for c in window]
-        has_more = start + COMMANDER_PAGE_SIZE < total
     return templates.TemplateResponse(
         request,
         "commanders.html",

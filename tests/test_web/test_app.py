@@ -377,6 +377,23 @@ def test_commanders_popular_paginates(client):
     assert "page=1" in r2.text  # a live "prev" link back
 
 
+def test_commanders_popular_falls_back_when_edhrec_unavailable(client):
+    # EDHREC's ranking momentarily returns nothing (403/network) -> the browse
+    # must still list commanders via Scryfall, not dead-end on "not found".
+    class DownEdhrec(FakeEdhrec):
+        def fetch_top_commanders(self):
+            return []
+
+    app.dependency_overrides[get_edhrec] = lambda: DownEdhrec()
+    try:
+        r = client.get("/commanders")
+        assert r.status_code == 200
+        assert "No commanders found" not in r.text
+        assert "Atraxa" in r.text  # Scryfall fallback populated the list
+    finally:
+        app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()
+
+
 def test_commanders_search_filters(client):
     r = client.get("/commanders", params={"q": "dragon"})
     assert "The Ur-Dragon" in r.text

@@ -9,9 +9,11 @@ import pytest
 
 from manaless.edhrec_client import (
     CardPopularity,
+    EdhrecBlocked,
     EdhrecBuildIdError,
     EdhrecClient,
     EdhrecDeckNotFound,
+    EdhrecError,
     PopularityIndex,
     filter_deck_hashes,
 )
@@ -139,11 +141,17 @@ def test_commander_stats_dfc_front_face_lookup(tmp_path):
     assert stats.get("Valki, God of Lies // Tibalt, Cosmic Impostor") is not None
 
 
-@pytest.mark.parametrize("status", [403, 404])
-def test_commander_stats_empty_when_no_page(tmp_path, status):
-    client = _client(tmp_path, lambda r: httpx.Response(status))
+def test_commander_stats_empty_when_page_missing_404(tmp_path):
+    client = _client(tmp_path, lambda r: httpx.Response(404))
     stats = client.fetch_commander_card_stats("Obscure Commander")
     assert not stats and len(stats) == 0
+
+
+def test_commander_stats_403_raises_blocked(tmp_path):
+    # A 403 here is a WAF/rate ban, not an empty commander — it must surface.
+    client = _client(tmp_path, lambda r: httpx.Response(403))
+    with pytest.raises(EdhrecBlocked):
+        client.fetch_commander_card_stats("Atraxa, Praetors' Voice")
 
 
 # --- top commanders (popular browse ranking) -----------------------------
@@ -166,10 +174,15 @@ def test_fetch_top_commanders_ranked_and_deduped(tmp_path):
     assert top[0].num_decks == 48385
 
 
-@pytest.mark.parametrize("status", [403, 404])
-def test_fetch_top_commanders_empty_when_no_page(tmp_path, status):
-    client = _client(tmp_path, lambda r: httpx.Response(status))
+def test_fetch_top_commanders_empty_when_no_page_404(tmp_path):
+    client = _client(tmp_path, lambda r: httpx.Response(404))
     assert client.fetch_top_commanders() == []
+
+
+def test_fetch_top_commanders_403_raises_blocked(tmp_path):
+    client = _client(tmp_path, lambda r: httpx.Response(403))
+    with pytest.raises(EdhrecBlocked):
+        client.fetch_top_commanders()
 
 
 def test_popularity_excluding_filters_deck_and_sorts_by_usage():
@@ -217,6 +230,48 @@ def test_fetch_deck_refreshes_build_id_on_404(tmp_path):
     assert state["scrapes"] == 2  # refreshed exactly once
 
 
+def test_fetch_deck_refreshes_build_id_on_html_body(tmp_path):
+    """A stale _next/data URL 200-redirects to HTML: parse failure -> refresh once."""
+    state = {"scrapes": 0}
+    deck = {"pageProps": {"data": {"deck": ["1 Sol Ring"]}}}
+
+    def handler(request):
+        url = str(request.url)
+        if _is_homepage(url):
+            state["scrapes"] += 1
+            build_id = "STALE" if state["scrapes"] == 1 else "FRESH"
+            return httpx.Response(200, text=_manifest_html(build_id))
+        if "/_next/data/FRESH/" in url:
+            return httpx.Response(200, json=deck)
+        return httpx.Response(200, text="<!doctype html><html>login wall</html>")  # not JSON
+
+    client = _client(tmp_path, handler)
+    assert client.fetch_deck("xyz") == ["1 Sol Ring"]
+    assert state["scrapes"] == 2  # refreshed exactly once
+
+
+def test_fetch_deck_soft_404_is_evicted_and_recovers(tmp_path):
+    """An HTTP-200 soft-404 must raise AND drop its cache entry (no stale replay)."""
+    state = {"good": False}
+    good_deck = {"pageProps": {"data": {"deck": ["1 Sol Ring"]}}}
+
+    def handler(request):
+        url = str(request.url)
+        if _is_homepage(url):
+            return httpx.Response(200, text=_manifest_html("BUILD"))
+        if state["good"]:
+            return httpx.Response(200, json=good_deck)
+        return httpx.Response(200, json={"pageProps": {}})  # soft-404 shape
+
+    client = _client(tmp_path, handler)
+    with pytest.raises(EdhrecError):
+        client.fetch_deck("xyz")
+    # the poisoned entry was evicted, not left to shadow later good fetches
+    assert client._http.cache.get("edhrec-decklist", "xyz") is None
+    state["good"] = True
+    assert client.fetch_deck("xyz") == ["1 Sol Ring"]
+
+
 def test_fetch_deck_gives_up_after_refresh(tmp_path):
     def handler(request):
         url = str(request.url)
@@ -245,3 +300,12 @@ def test_filter_deck_hashes_sorts_recent_first_and_bands_price():
 def test_filter_deck_hashes_skips_rows_without_urlhash():
     table = [{"savedate": "2026-06-01"}, {"urlhash": "ok", "savedate": "2026-05-01"}]
     assert filter_deck_hashes(table) == ["ok"]
+
+
+def test_filter_deck_hashes_handles_null_savedate():
+    # A stored ``"savedate": null`` must not crash the sort (None < str); nulls last.
+    table = [
+        {"urlhash": "dated", "savedate": "2026-01-01"},
+        {"urlhash": "nulldate", "savedate": None},
+    ]
+    assert filter_deck_hashes(table) == ["dated", "nulldate"]

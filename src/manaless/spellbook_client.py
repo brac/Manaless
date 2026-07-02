@@ -2,8 +2,10 @@
 
 POST a decklist to ``find-my-combos`` (combos present + the "almost included"
 pool that powers the "Add 1" feature) and, later, ``estimate-bracket``. Results
-are cached by a decklist hash — stable for a fixed list, so a substitution is the
-only thing that triggers a fresh call.
+are cached by a decklist hash — a substitution changes the hash and triggers a
+fresh call — but only for a bounded TTL: Spellbook adds combos continuously and
+the Game-Changers rubric shifts (CLAUDE.md §12), so a *fixed* deck's answer is
+not permanently stable and must expire.
 
 Schemas live-verified 2026-06-27 (see docs/verified.md §1): the top-level
 ``{count, next, previous, results}`` wrapper is **not** actually paginated
@@ -17,6 +19,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+import httpx
+
 from manaless.deck_model import DeckModel
 from manaless.http.client import HttpClient
 
@@ -25,6 +29,17 @@ FIND_MY_COMBOS_URL = f"{BASE_URL}/find-my-combos"
 ESTIMATE_BRACKET_URL = f"{BASE_URL}/estimate-bracket"
 CACHE_NAMESPACE = "spellbook-combos"
 BRACKET_CACHE_NAMESPACE = "spellbook-bracket"
+# Spellbook's combo database and bracket rubric change over time, so a cached
+# answer for a fixed deck must expire rather than go permanently stale.
+SPELLBOOK_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+class SpellbookUnavailable(RuntimeError):
+    """A Commander Spellbook request failed at the HTTP layer.
+
+    Raised instead of leaking a raw ``httpx`` traceback into the UI mid-build;
+    the web layer catches it and renders a "combo data unavailable — retry" state.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +82,21 @@ def decklist_hash(deck: DeckModel) -> str:
 def find_my_combos(http: HttpClient, deck: DeckModel) -> ComboResults:
     """POST the deck to ``find-my-combos`` and return the parsed results (cached)."""
     key = decklist_hash(deck)
-    cached = http.cache.get(CACHE_NAMESPACE, key)
+    cached = http.cache.get(CACHE_NAMESPACE, key, ttl_seconds=SPELLBOOK_TTL_SECONDS)
     if cached is None:
-        cached = http.post_json(FIND_MY_COMBOS_URL, _deck_request(deck))
+        cached = _post(http, FIND_MY_COMBOS_URL, deck)
         http.cache.set(CACHE_NAMESPACE, key, cached)
     return _parse_results(cached)
+
+
+def _post(http: HttpClient, url: str, deck: DeckModel) -> dict:
+    """POST a deck to Spellbook, translating any HTTP failure into a clean error."""
+    try:
+        return http.post_json(url, _deck_request(deck))
+    except httpx.HTTPError as exc:
+        raise SpellbookUnavailable(
+            f"Commander Spellbook request to {url} failed ({exc})."
+        ) from exc
 
 
 def _deck_request(deck: DeckModel) -> dict:
@@ -153,9 +178,9 @@ class BracketEstimate:
 def estimate_bracket(http: HttpClient, deck: DeckModel) -> BracketEstimate:
     """POST the deck to ``estimate-bracket`` and return the parsed result (cached)."""
     key = decklist_hash(deck)
-    cached = http.cache.get(BRACKET_CACHE_NAMESPACE, key)
+    cached = http.cache.get(BRACKET_CACHE_NAMESPACE, key, ttl_seconds=SPELLBOOK_TTL_SECONDS)
     if cached is None:
-        cached = http.post_json(ESTIMATE_BRACKET_URL, _deck_request(deck))
+        cached = _post(http, ESTIMATE_BRACKET_URL, deck)
         http.cache.set(BRACKET_CACHE_NAMESPACE, key, cached)
     return _parse_bracket(cached)
 

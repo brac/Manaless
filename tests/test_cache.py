@@ -35,6 +35,34 @@ def test_corrupt_entry_is_a_miss(tmp_path):
     assert cache.get("scryfall-card", "Sol Ring") is None
 
 
+def test_valid_json_wrong_shape_is_a_miss_not_a_crash(tmp_path):
+    # Valid JSON that isn't the {stored_at, value} envelope must read as a miss,
+    # never raise AttributeError/TypeError.
+    cache = DiskCache(tmp_path)
+    for payload in ("[]", '"x"', "null"):
+        cache.set("scryfall-card", "K", {"real": 1})  # ensure the dir exists
+        stored = next((tmp_path / "scryfall-card").glob("*.json"))
+        stored.write_text(payload, encoding="utf-8")
+        assert cache.get("scryfall-card", "K") is None
+        assert cache.get("scryfall-card", "K", ttl_seconds=100) is None
+
+
+def test_non_numeric_stored_at_with_ttl_is_a_miss(tmp_path):
+    cache = DiskCache(tmp_path)
+    cache.set("deck-table", "k", [1])
+    stored = next((tmp_path / "deck-table").glob("*.json"))
+    stored.write_text('{"stored_at": "yesterday", "value": 1}', encoding="utf-8")
+    assert cache.get("deck-table", "k", ttl_seconds=100) is None  # no TypeError
+
+
+def test_delete_removes_entry_and_is_idempotent(tmp_path):
+    cache = DiskCache(tmp_path)
+    cache.set("edhrec-decklist", "xyz", ["1 Sol Ring"])
+    cache.delete("edhrec-decklist", "xyz")
+    assert cache.get("edhrec-decklist", "xyz") is None
+    cache.delete("edhrec-decklist", "xyz")  # missing entry: no error
+
+
 def test_unsafe_keys_do_not_collide_and_are_storable(tmp_path):
     cache = DiskCache(tmp_path)
     # DFC names, apostrophes, slashes — must each store/retrieve independently.

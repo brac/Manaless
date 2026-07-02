@@ -45,6 +45,9 @@ def run(commander: str) -> int:
             return 1
 
         deck_ids = filter_deck_hashes(table)
+        if not deck_ids:
+            print("  (deck table had rows but none carried a usable urlhash)")
+            return 1
         deck_id = deck_ids[0]
         selected = next((row for row in table if row.get("urlhash") == deck_id), {})
         print(

@@ -44,9 +44,15 @@ class DiskCache:
             entry = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             return None
+        # Valid JSON of the wrong shape is still corrupt: a bare list/str/null, or
+        # a non-numeric stored_at, must read as a miss, not raise.
+        if not isinstance(entry, dict):
+            return None
         if ttl_seconds is not None:
-            age = time.time() - entry.get("stored_at", 0)
-            if age > ttl_seconds:
+            stored_at = entry.get("stored_at")
+            if not isinstance(stored_at, (int, float)):
+                return None
+            if time.time() - stored_at > ttl_seconds:
                 return None
         return entry.get("value")
 
@@ -58,6 +64,15 @@ class DiskCache:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
+
+    def delete(self, namespace: str, key: str) -> None:
+        """Remove a cached entry if present; a missing entry is not an error.
+
+        Used to evict a poisoned entry — a soft-error body (e.g. an EDHREC
+        HTTP-200 ``{"pageProps": {}}``) that was cached before the caller could
+        validate its shape — so the next fetch re-requests instead of replaying it.
+        """
+        self._path(namespace, key).unlink(missing_ok=True)
 
     def _path(self, namespace: str, key: str) -> Path:
         return self._root / namespace / f"{self._safe_key(key)}.json"

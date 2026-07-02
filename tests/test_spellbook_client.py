@@ -3,11 +3,17 @@
 import json
 
 import httpx
+import pytest
 
 from manaless.deck_model import Card, DeckModel
 from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
-from manaless.spellbook_client import decklist_hash, estimate_bracket, find_my_combos
+from manaless.spellbook_client import (
+    SpellbookUnavailable,
+    decklist_hash,
+    estimate_bracket,
+    find_my_combos,
+)
 
 
 def _http(tmp_path, handler) -> HttpClient:
@@ -140,3 +146,35 @@ def test_estimate_bracket_cached_by_hash(tmp_path):
     estimate_bracket(http, _deck())
     estimate_bracket(http, _deck())
     assert calls["n"] == 1
+
+
+def test_find_my_combos_refetches_after_ttl_expires(tmp_path):
+    # Spellbook adds combos over time, so a cached answer must expire and refetch.
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json=RESPONSE)
+
+    http = _http(tmp_path, handler)
+    find_my_combos(http, _deck())
+    assert calls["n"] == 1
+    # Age the cached entry to the epoch — well past the TTL.
+    stored = next((tmp_path / "spellbook-combos").glob("*.json"))
+    entry = json.loads(stored.read_text(encoding="utf-8"))
+    entry["stored_at"] = 0.0
+    stored.write_text(json.dumps(entry), encoding="utf-8")
+    find_my_combos(http, _deck())
+    assert calls["n"] == 2  # stale -> refetched
+
+
+def test_find_my_combos_http_error_raises_unavailable(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(500, json={}))
+    with pytest.raises(SpellbookUnavailable):
+        find_my_combos(http, _deck())
+
+
+def test_estimate_bracket_http_error_raises_unavailable(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(500, json={}))
+    with pytest.raises(SpellbookUnavailable):
+        estimate_bracket(http, _deck())

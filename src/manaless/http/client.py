@@ -8,7 +8,9 @@ limiter, fetches, raises on HTTP error, caches, and returns parsed JSON.
 
 from __future__ import annotations
 
+import email.utils
 import time
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,8 +20,9 @@ from manaless.http.cache import DiskCache
 from manaless.http.rate_limiter import RateLimiter
 
 # A descriptive UA is the polite minimum for these free community services
-# (CLAUDE.md §2). Appending a contact URL/email is encouraged but optional.
-DEFAULT_USER_AGENT = "Manaless/0.1 (+https://github.com/; personal MTG Commander tool)"
+# (CLAUDE.md §2), and a reachable contact URL lets an API operator tell us apart
+# from an abusive scraper rather than just blocking.
+DEFAULT_USER_AGENT = "Manaless/0.1 (+https://github.com/brac/Manaless; personal MTG Commander tool)"
 
 # Minimum seconds between requests, per host (CLAUDE.md §4).
 HOST_DELAYS: dict[str, float] = {
@@ -28,19 +31,54 @@ HOST_DELAYS: dict[str, float] = {
     "api.scryfall.com": 0.12,
     "backend.commanderspellbook.com": 0.10,
 }
+# Hosts that belong to the same service share ONE limiter, so interleaved traffic
+# to two domains of one provider (json.edhrec.com + edhrec.com) still honours a
+# single combined cadence instead of hitting the provider at ~2x the promise.
+_HOST_GROUP: dict[str, str] = {
+    "edhrec.com": "edhrec",
+    "json.edhrec.com": "edhrec",
+    "api.scryfall.com": "scryfall",
+    "backend.commanderspellbook.com": "spellbook",
+}
 _DEFAULT_DELAY = 0.20
 _DEFAULT_TIMEOUT = 20.0
 
 # On HTTP 429, honour Retry-After and retry rather than failing the pipeline.
 _MAX_RETRIES = 3
 _RETRY_AFTER_FALLBACK = 1.0
+# Never let a server's Retry-After park the whole pipeline: a hostile or buggy
+# "Retry-After: 86400" would otherwise sleep for a day.
+_RETRY_AFTER_MAX = 30.0
 
 
 def _retry_after_seconds(response: httpx.Response) -> float:
-    try:
-        return max(0.0, float(response.headers.get("Retry-After", "")))
-    except ValueError:
+    """Seconds to wait per a 429's ``Retry-After``, in either standard form.
+
+    Accepts the delta-seconds form (``120``) and the HTTP-date form
+    (``Wed, 21 Oct 2026 07:28:00 GMT``); clamps the result to a sane ceiling and
+    falls back to a short default if the header is absent or unparseable.
+    """
+    raw = response.headers.get("Retry-After", "").strip()
+    if not raw:
         return _RETRY_AFTER_FALLBACK
+    try:
+        delay = float(raw)
+    except ValueError:
+        delay = _http_date_delay(raw)
+    return max(0.0, min(delay, _RETRY_AFTER_MAX))
+
+
+def _http_date_delay(raw: str) -> float:
+    """Seconds from now until an HTTP-date ``Retry-After``; fallback if unparseable."""
+    try:
+        parsed = email.utils.parsedate_to_datetime(raw)
+    except (ValueError, TypeError):
+        return _RETRY_AFTER_FALLBACK
+    if parsed is None:
+        return _RETRY_AFTER_FALLBACK
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (parsed - datetime.now(timezone.utc)).total_seconds()
 
 
 class HttpClient:
@@ -57,13 +95,21 @@ class HttpClient:
         default_delay: float = _DEFAULT_DELAY,
     ) -> None:
         self._cache = cache
+        # Only close a client we created; an injected one is the caller's to own.
+        self._owns_client = client is None
         self._client = client or httpx.Client(
             headers={"User-Agent": user_agent},
             timeout=timeout,
             follow_redirects=True,
         )
         delays = HOST_DELAYS if host_delays is None else host_delays
-        self._limiters = {host: RateLimiter(delay) for host, delay in delays.items()}
+        # Collapse hosts into shared groups; a group's delay is the most
+        # conservative (largest) promised across its member hosts.
+        group_delays: dict[str, float] = {}
+        for host, delay in delays.items():
+            group = _HOST_GROUP.get(host, host)
+            group_delays[group] = max(group_delays.get(group, 0.0), delay)
+        self._limiters = {group: RateLimiter(delay) for group, delay in group_delays.items()}
         self._default_limiter = RateLimiter(default_delay)
 
     def get_json(
@@ -140,10 +186,12 @@ class HttpClient:
 
     def _limiter_for(self, url: str) -> RateLimiter:
         host = urlparse(url).netloc
-        return self._limiters.get(host, self._default_limiter)
+        group = _HOST_GROUP.get(host, host)
+        return self._limiters.get(group, self._default_limiter)
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
 
     def __enter__(self) -> "HttpClient":
         return self

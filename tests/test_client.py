@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from manaless.http.cache import DiskCache
-from manaless.http.client import HttpClient
+from manaless.http.client import HttpClient, _retry_after_seconds
 
 
 def _client(tmp_path, handler) -> HttpClient:
@@ -106,3 +106,41 @@ def test_known_hosts_get_their_configured_limiter(tmp_path):
 
     assert edhrec is not scryfall
     assert unknown is client._default_limiter
+
+
+def test_both_edhrec_hosts_share_one_limiter(tmp_path):
+    # json.edhrec.com and edhrec.com are one service: interleaved traffic must
+    # share a single limiter so the combined cadence honours the 0.80s promise.
+    client = _client(tmp_path, lambda r: httpx.Response(200, json={}))
+    a = client._limiter_for("https://json.edhrec.com/pages/decks/x.json")
+    b = client._limiter_for("https://edhrec.com/_next/data/B/deckpreview/x.json")
+    assert a is b
+    assert a is not client._limiter_for("https://api.scryfall.com/cards/named")
+
+
+def test_injected_client_is_not_closed_on_exit(tmp_path):
+    inner = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    with HttpClient(DiskCache(tmp_path), client=inner):
+        pass
+    assert not inner.is_closed  # we don't own it, so we don't close it
+
+
+def test_retry_after_delta_seconds_is_clamped():
+    def resp(value):
+        return httpx.Response(429, headers={"Retry-After": value})
+
+    assert _retry_after_seconds(resp("5")) == 5.0
+    assert _retry_after_seconds(resp("86400")) == 30.0  # clamped to the ceiling
+
+
+def test_retry_after_http_date_form_is_parsed_and_clamped():
+    def resp(value):
+        return httpx.Response(429, headers={"Retry-After": value})
+
+    assert _retry_after_seconds(resp("Wed, 21 Oct 2099 07:28:00 GMT")) == 30.0  # far future -> ceiling
+    assert _retry_after_seconds(resp("Wed, 21 Oct 2000 07:28:00 GMT")) == 0.0   # past -> floor
+
+
+def test_retry_after_missing_or_garbage_uses_fallback():
+    assert _retry_after_seconds(httpx.Response(429)) == 1.0
+    assert _retry_after_seconds(httpx.Response(429, headers={"Retry-After": "soon"})) == 1.0

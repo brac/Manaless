@@ -13,6 +13,7 @@ operations live on :class:`EdhrecClient`, which owns the rate-limited
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -37,6 +38,10 @@ DECK_PREVIEW_URL = (
 
 # EDHREC refreshes deck data ~daily; the per-deck list is immutable by hash.
 DECK_TABLE_TTL_SECONDS = 24 * 60 * 60
+# The per-deck list is immutable by hash, so it caches ~forever — but a long TTL
+# lets any poisoned soft-error entry self-heal on its own rather than sticking
+# until manual deletion.
+DECKLIST_TTL_SECONDS = 30 * 24 * 60 * 60
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 _APOSTROPHES = ("'", "’")
@@ -55,6 +60,11 @@ _BUILD_ID_ROTATED_STATUS = 404
 # both mean "no indexed decks" -> the §5 fallback to an average deck. Scoped to
 # the deck-table call so a systemic block still surfaces via other endpoints.
 _NO_DECK_TABLE_STATUS = {403, 404}
+# On the card-stats and top-commanders endpoints only a 404 means "no such page";
+# a 403 there is a WAF / rate ban, which must surface (EdhrecBlocked) rather than
+# masquerade as legitimate empty data across every commander.
+_NO_PAGE_STATUS = 404
+_BLOCKED_STATUS = 403
 
 
 class EdhrecError(RuntimeError):
@@ -67,6 +77,14 @@ class EdhrecBuildIdError(EdhrecError):
 
 class EdhrecDeckNotFound(EdhrecError):
     """A decklist could not be fetched for a deck id, even after a build-id refresh."""
+
+
+class EdhrecBlocked(EdhrecError):
+    """EDHREC returned a 403 on a page that should exist — a WAF / rate ban.
+
+    Distinct from "no indexed decks": a systemic block must surface, not be
+    silently rendered as every commander having empty data.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,8 +227,14 @@ class EdhrecClient:
                 ttl_seconds=DECK_TABLE_TTL_SECONDS,
             )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in _NO_DECK_TABLE_STATUS:
+            status = exc.response.status_code
+            if status == _NO_PAGE_STATUS:
                 return PopularityIndex({})
+            if status == _BLOCKED_STATUS:
+                raise EdhrecBlocked(
+                    f"EDHREC returned 403 for commander stats {commander!r} — "
+                    "likely a rate/WAF block, not an empty commander."
+                ) from exc
             raise
 
         container = data.get("container") if isinstance(data, dict) else None
@@ -251,8 +275,14 @@ class EdhrecClient:
                 ttl_seconds=DECK_TABLE_TTL_SECONDS,
             )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in _NO_DECK_TABLE_STATUS:
+            status = exc.response.status_code
+            if status == _NO_PAGE_STATUS:
                 return []
+            if status == _BLOCKED_STATUS:
+                raise EdhrecBlocked(
+                    "EDHREC returned 403 for the top-commanders list — "
+                    "likely a rate/WAF block."
+                ) from exc
             raise
 
         container = data.get("container") if isinstance(data, dict) else None
@@ -273,13 +303,17 @@ class EdhrecClient:
     def fetch_deck(self, deck_id: str) -> list[str]:
         """Full decklist for a deck id as a flat ``["1 Card Name", ...]`` array.
 
-        Implements the runbook: a 404 means the build id rotated, so refresh it
-        once and retry before giving up.
+        Implements the runbook: a 404 — or a stale ``_next/data`` URL that
+        200-redirects to a non-JSON page (``follow_redirects=True``) — means the
+        build id likely rotated, so refresh it once and retry before giving up.
         """
         try:
             return self._fetch_deck_raw(self.build_id(), deck_id)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != _BUILD_ID_ROTATED_STATUS:
+        except (httpx.HTTPStatusError, json.JSONDecodeError) as exc:
+            # A non-404 HTTP error is not a build-id rotation — propagate it.
+            if isinstance(exc, httpx.HTTPStatusError) and (
+                exc.response.status_code != _BUILD_ID_ROTATED_STATUS
+            ):
                 raise
             try:
                 return self._fetch_deck_raw(self.build_id(force_refresh=True), deck_id)
@@ -287,6 +321,12 @@ class EdhrecClient:
                 raise EdhrecDeckNotFound(
                     f"Deck {deck_id!r} not found even after refreshing the build id "
                     f"(HTTP {retry_exc.response.status_code})."
+                ) from retry_exc
+            except json.JSONDecodeError as retry_exc:
+                raise EdhrecError(
+                    f"Deck {deck_id!r} did not return JSON even after refreshing the "
+                    "build id — EDHREC may have redeployed or is blocking requests "
+                    "(CLAUDE.md §4 runbook)."
                 ) from retry_exc
 
     def _scrape_build_id(self) -> str:
@@ -308,10 +348,16 @@ class EdhrecClient:
             DECK_PREVIEW_URL.format(build_id=build_id, deck_id=deck_id),
             cache_namespace="edhrec-decklist",
             cache_key=deck_id,
+            ttl_seconds=DECKLIST_TTL_SECONDS,
         )
         try:
             return data["pageProps"]["data"]["deck"]
         except (KeyError, TypeError) as exc:
+            # An EDHREC soft-404 (HTTP 200 with an empty ``{"pageProps": {}}``
+            # body) was cached before we could validate its shape. Evict it so the
+            # next attempt refetches instead of replaying the poison forever — the
+            # build-id runbook can never fire for it (there was no HTTP error).
+            self._http.cache.delete("edhrec-decklist", deck_id)
             raise EdhrecError(
                 f"Unexpected deck-preview shape for {deck_id!r}; EDHREC may have "
                 "changed its response structure."
@@ -334,7 +380,9 @@ def filter_deck_hashes(
         rows = [row for row in rows if _price(row) >= min_price]
     if max_price is not None:
         rows = [row for row in rows if _price(row) <= max_price]
-    rows.sort(key=lambda row: row.get("savedate", ""), reverse=True)
+    # `or ""` (not a default) so a stored ``"savedate": null`` sorts as empty
+    # instead of raising on ``None < str``; null-dated rows land last.
+    rows.sort(key=lambda row: row.get("savedate") or "", reverse=True)
     return [row["urlhash"] for row in rows if row.get("urlhash")]
 
 

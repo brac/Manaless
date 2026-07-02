@@ -134,6 +134,38 @@ def test_substitution_returns_new_model_leaving_original_unchanged():
     assert original.edhrec_bracket == 3
 
 
+def test_substitute_one_basic_keeps_the_rest_of_the_stack():
+    # Swapping one of 10 Forests must drop a single copy, not the whole stack (D2).
+    deck = DeckModel(
+        commanders=(_c("Atraxa, Praetors' Voice", "Legendary Creature"),),
+        cards=(_c("Forest", "Basic Land", quantity=10),),
+    ).substitute("Forest", _c("Island", "Basic Land"))
+    forest = next((c for c in deck.cards if c.name == "Forest"), None)
+    assert forest is not None and forest.quantity == 9
+    assert "Island" in [c.name for c in deck.cards]
+    assert deck.total_cards == 11  # 1 commander + 9 Forest + 1 Island (was 11)
+
+
+def test_substitute_singleton_removes_the_entry():
+    deck = _src_deck().substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
+    assert "Sol Ring" not in [c.name for c in deck.cards]
+    assert "Arcane Signet" in [c.name for c in deck.cards]
+
+
+def test_add_merge_prefers_the_resolved_side():
+    # Adding an unresolved copy (Scryfall down) must not blank enriched metadata (D3).
+    enriched = Card(name="Sol Ring", quantity=1, type_line="Artifact",
+                    oracle_text="{T}: Add {C}{C}.", resolved=True)
+    unresolved = Card(name="Sol Ring", quantity=1, resolved=False)
+    deck = DeckModel(commanders=(_c("Cmd"),), cards=(enriched,)).add(unresolved)
+    sol = next(c for c in deck.cards if c.name == "Sol Ring")
+    assert sol.quantity == 2 and sol.oracle_text == "{T}: Add {C}{C}." and sol.resolved
+    # ...and the reverse order still keeps the enriched fields.
+    deck2 = DeckModel(commanders=(_c("Cmd"),), cards=(unresolved,)).add(enriched)
+    sol2 = next(c for c in deck2.cards if c.name == "Sol Ring")
+    assert sol2.oracle_text == "{T}: Add {C}{C}." and sol2.resolved
+
+
 def test_commanders_untouched_by_substitution():
     deck = _src_deck().substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
     assert [c.name for c in deck.commanders] == ["Atraxa, Praetors' Voice"]

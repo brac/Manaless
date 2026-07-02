@@ -99,3 +99,10 @@ def test_load_dispatches_on_suffix(tmp_path):
 def test_load_missing_file_is_empty(tmp_path):
     col = Collection.load(tmp_path / "nope.json")
     assert not col and len(col) == 0
+
+
+def test_zero_or_negative_quantities_are_dropped():
+    # A phantom 0/negative entry must not pollute distinct/total (D12).
+    col = Collection.from_json({"Sol Ring": 0, "Mana Crypt": -1, "Forest": 3})
+    assert col.quantity("Sol Ring") == 0 and col.quantity("Mana Crypt") == 0
+    assert col.distinct == 1 and col.total == 3  # only Forest survived

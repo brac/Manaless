@@ -37,9 +37,16 @@ _EXTRA_COMBAT = ("additional combat phase", "additional combat step", "additiona
 _BURN = (
     "deals damage to each opponent",
     "damage to each of your opponents",
-    "deals damage to each of your opponents",
 )
-_MILL = ("mill", "into their graveyard from their library")
+# Opponent-facing mill only: a bare "mill" matched self-mill engines and mana
+# dorks ("Millikin", "Stitcher's Supplier") as if they were a mill *win* plan.
+_MILL = (
+    "opponent mills",
+    "each opponent mills",
+    "target player mills",
+    "each player mills",
+    "into their graveyard from their library",
+)
 
 # Human labels for the heuristic's internal plan keys.
 _PLAN_LABELS = {
@@ -164,12 +171,17 @@ def _add_one_lines(combos: ComboResults, deck_names: set[str]) -> tuple[AddOneLi
 
 
 def _scan_alt_wins(deck: DeckModel) -> tuple[str, ...]:
-    """Cards whose oracle text literally wins the game (Scryfall oracle:"win the game")."""
-    return tuple(
-        card.name
-        for card in deck.all_cards()
-        if "win the game" in card.oracle_text.casefold()
-    )
+    """Cards whose oracle text literally wins the game (Scryfall oracle:"win the game").
+
+    Excludes "you *can't* win the game" (Platinum Angel, Abyssal Persecutor) — a
+    lock/liability, the opposite of a win condition.
+    """
+    out = []
+    for card in deck.all_cards():
+        text = card.oracle_text.casefold()
+        if "win the game" in text and "can't win the game" not in text:
+            out.append(card.name)
+    return tuple(out)
 
 
 def _infer_noncombo_plan(deck: DeckModel) -> tuple[tuple[str, int], ...]:
@@ -192,7 +204,9 @@ def _infer_noncombo_plan(deck: DeckModel) -> tuple[tuple[str, int], ...]:
             counts["burn"] += 1
         if any(kw in text for kw in _MILL):
             counts["mill"] += 1
-        if "token" in text and "create" in text:
+        # Go-wide means *creature* tokens; Treasure/Clue/Food generators don't win
+        # by swarming, so require the creature qualifier.
+        if "creature token" in text and "create" in text:
             counts["tokens"] += 1
 
     # Creature density is the backbone of an aggro plan.
@@ -207,7 +221,15 @@ def _infer_noncombo_plan(deck: DeckModel) -> tuple[tuple[str, int], ...]:
 
 
 def _combo_completeness(combos: ComboResults, deck_names: set[str]) -> str | None:
-    """"X of Y pieces" for the closest-to-complete almost-included combo."""
+    """Assembled-combo count if any are complete, else "X of Y pieces" for the
+    closest almost-included combo.
+
+    A deck with a fully assembled combo must report that first (per CLAUDE.md §6),
+    not "1 of 2 pieces" for some unrelated near-miss.
+    """
+    if combos.included:
+        n = len(combos.included)
+        return f"{n} combo{'s' if n != 1 else ''} complete"
     best: tuple[int, int] | None = None  # (present, total) of the fewest-missing combo
     for combo in combos.almost_included:
         total = len(combo.cards)

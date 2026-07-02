@@ -47,9 +47,12 @@ _BOARD_WIPE_SUBSTRINGS = (
     "exile each",
     "all creatures get -",
     "each player sacrifices",
-    "return all",
 )
 _BOARD_WIPE_RE = re.compile(r"damage to each (?:creature|other creature)")
+# "Return all ..." is a bounce wipe (Evacuation) — UNLESS it pulls from a
+# graveyard, which makes it mass reanimation (Rally the Ancestors, Open the
+# Vaults). Offering Wrath of God as a "like-for-like" swap for those is wrong.
+_BOARD_WIPE_BOUNCE = "return all"
 
 # Single-target interaction: destroy/exile/bounce/burn one thing.
 _REMOVAL_SUBSTRINGS = (
@@ -95,7 +98,8 @@ def functional_category(type_line: str, oracle_text: str) -> str:
     text = (oracle_text or "").casefold()
     front = _front(type_line)
 
-    if any(s in text for s in _BOARD_WIPE_SUBSTRINGS) or _BOARD_WIPE_RE.search(text):
+    bounce_wipe = _BOARD_WIPE_BOUNCE in text and "graveyard" not in text
+    if any(s in text for s in _BOARD_WIPE_SUBSTRINGS) or _BOARD_WIPE_RE.search(text) or bounce_wipe:
         return BOARD_WIPE
     if any(s in text for s in _REMOVAL_SUBSTRINGS) or _REMOVAL_RE.search(text):
         return REMOVAL

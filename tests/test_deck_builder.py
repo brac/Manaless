@@ -28,7 +28,7 @@ class FakeEdhrec:
 def _meta(name, type_line="Artifact"):
     return ScryfallCard(
         name=name, type_line=type_line, oracle_text=f"text of {name}",
-        mana_value=1.0, color_identity=(), image_url=None, scryfall_uri=None, is_dfc=False,
+        mana_value=1.0, color_identity=(), image_url=None, scryfall_uri=None, has_faces=False,
     )
 
 

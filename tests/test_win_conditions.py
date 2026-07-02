@@ -73,6 +73,16 @@ def test_alt_win_scan_flags_win_the_game_text():
     assert wc.primary == "alternate win"
 
 
+def test_alt_win_scan_excludes_cant_win_the_game():
+    # Platinum Angel says "you can't win the game" — a liability, not a wincon.
+    deck = _deck([
+        Card("Platinum Angel", 1, oracle_text="You can't lose the game and your opponents can't win the game."),
+        Card("Thassa's Oracle", 1, oracle_text="...you win the game."),
+    ])
+    wc = evaluate_win_conditions(deck, ComboResults("C", (), ()))
+    assert wc.alt_wins == ("Thassa's Oracle",)  # Platinum Angel excluded
+
+
 def test_noncombo_aggro_profile_and_fallback():
     creatures = [
         Card(f"Beater {i}", 1, type_line="Creature — Beast", oracle_text="Flying")
@@ -95,6 +105,29 @@ def test_mill_and_tokens_signals():
     profile = dict(evaluate_win_conditions(deck, ComboResults("C", (), ())).noncombo_profile)
     assert profile.get("mill", 0) >= 1
     assert profile.get("go-wide tokens", 0) >= 1
+
+
+def test_self_mill_and_nontoken_do_not_score():
+    # Self-mill dorks and Treasure/Clue makers must NOT read as mill / go-wide plans.
+    deck = _deck([
+        Card("Stitcher's Supplier", 1, oracle_text="When this enters, mill three cards."),
+        Card("Smothering Tithe", 1, oracle_text="Whenever an opponent draws, create a Treasure token unless they pay."),
+    ])
+    profile = dict(evaluate_win_conditions(deck, ComboResults("C", (), ())).noncombo_profile)
+    assert profile.get("mill", 0) == 0        # self-mill, not opponent-facing
+    assert profile.get("go-wide tokens", 0) == 0  # Treasure, not creature tokens
+
+
+def test_combo_completeness_reports_assembled_first():
+    # An assembled combo plus an unrelated near-miss must report the assembled state.
+    deck = _deck([Card("Sol Ring", 1), Card("Basalt Monolith", 1), Card("Kiki-Jiki", 1)])
+    combos = ComboResults(
+        identity="C",
+        included=(_combo(["Sol Ring", "Basalt Monolith"]),),   # complete
+        almost_included=(_combo(["Kiki-Jiki", "Pestermite"]),),  # 1 of 2
+    )
+    wc = evaluate_win_conditions(deck, combos)
+    assert wc.combo_completeness == "1 combo complete"
 
 
 def test_combo_completeness_reports_closest_line():

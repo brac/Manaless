@@ -58,7 +58,7 @@ def _meta(name):
     tl = "Legendary Creature" if "Atraxa" in name else "Artifact"
     return ScryfallCard(
         name=name, type_line=tl, oracle_text=f"text of {name}", mana_value=1.0,
-        color_identity=(), image_url=f"http://img/{name}.png", scryfall_uri=None, is_dfc=False,
+        color_identity=(), image_url=f"http://img/{name}.png", scryfall_uri=None, has_faces=False,
     )
 
 

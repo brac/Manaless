@@ -32,6 +32,13 @@ _CASES = [
     ("Sorcery", "Destroy all creatures.", BOARD_WIPE),  # Wrath of God
     ("Sorcery", "Blasphemous Act deals 13 damage to each creature.", BOARD_WIPE),
     ("Sorcery", "Destroy all creatures. Then destroy target land.", BOARD_WIPE),  # precedence
+    ("Instant", "Return all creatures to their owners' hands.", BOARD_WIPE),  # Evacuation (bounce wipe)
+    # "Return all ... from graveyards" is mass reanimation, NOT a wipe (D10).
+    (
+        "Sorcery",
+        "Return all artifact and enchantment cards from all graveyards to the battlefield.",
+        "Sorcery",
+    ),  # Open the Vaults -> primary-type fallback, not Board Wipe
     # --- Removal: single-target destroy/exile/bounce/burn ----------------------
     ("Instant", "Exile target creature.", REMOVAL),  # Swords to Plowshares
     ("Instant", "Lightning Bolt deals 3 damage to any target.", REMOVAL),

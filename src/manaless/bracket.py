@@ -169,18 +169,25 @@ def evaluate_bracket(
         bracket, reasons = _resolve_tag(
             estimate.tag, len(gc_names), mld, fast_combo, len(fast_mana)
         )
-        return readout(bracket, True, "spellbook", estimate.tag, reasons)
+        return readout(bracket, True, "spellbook", estimate.tag, _with_extra_turns(reasons, extra_turns))
 
     # Path 3 (no label, no estimate): rough local guess from density alone.
     bracket, reasons = _heuristic_only(len(gc_names), len(fast_mana))
-    return readout(bracket, True, "heuristic", None, reasons)
+    return readout(bracket, True, "heuristic", None, _with_extra_turns(reasons, extra_turns))
+
+
+def _with_extra_turns(reasons: list[str], extra_turns: int) -> list[str]:
+    """Surface extra-turn density as an informational reason (not fed into the
+    number — that needs its own calibration; D5). Only noted once it's a pattern."""
+    if extra_turns >= 3:
+        return [*reasons, f"{extra_turns} extra-turn cards"]
+    return reasons
 
 
 def _resolve_tag(
     tag: str, gc: int, mld: int, fast_combo: bool, fast_mana: int
 ) -> tuple[int, list[str]]:
     """Map a bracketTag to a single 1-5, resolving O/S/R with rubric signals."""
-    high_power = gc >= 4 or mld > 0 or fast_combo
     reasons = [f"Spellbook tag {tag} ({_TAG_RANGE.get(tag, '?')})"]
     if gc:
         reasons.append(f"{gc} Game Changer(s)")
@@ -197,19 +204,25 @@ def _resolve_tag(
     # calibration set cluster at 2 (see docs/bracket-evaluator.md). Inference does
     # not emit bracket 1; that's a deliberate self-declared casual bracket.
     if tag in ("E", "C"):
-        return 2, reasons
-    if tag == "O":  # 2-3+: nudge to 3 if any real power signal, else 2
-        return (3 if (gc or fast_combo or mld) else 2), reasons
-    if tag == "P":  # 3+: 4 if Game-Changer-dense
-        return (4 if gc >= 4 else 3), reasons
-    if tag == "S":  # 3-4+
-        return (4 if high_power else 3), reasons
-    if tag == "R":  # 4+: bump to cEDH (5) only on strong combined signals
+        base = 2
+    elif tag == "O":  # 2-3+: nudge to 3 if any real power signal, else 2
+        base = 3 if (gc or fast_combo or mld) else 2
+    elif tag in ("P", "S"):  # 3+ / 3-4+: baseline 3; the floor below lifts high power
+        base = 3
+    elif tag == "R":  # 4+: bump to cEDH (5) only on strong combined signals
         is_cedh = gc >= 5 and fast_mana >= 4
         if is_cedh:
             reasons.append("cEDH-level density (Game Changers + fast mana)")
-        return (5 if is_cedh else 4), reasons
-    return 2, [*reasons, "unknown tag — defaulted to 2"]
+        base = 5 if is_cedh else 4
+    else:
+        return 2, [*reasons, "unknown tag — defaulted to 2"]
+
+    # Uniform rubric floor, applied regardless of tag: mass land denial, an early
+    # (fast) two-card combo, or Game-Changer density all put a deck at 4+ under the
+    # official brackets — so a P/O deck running Armageddon can't resolve to 3.
+    if mld > 0 or fast_combo or gc >= 4:
+        base = max(base, 4)
+    return base, reasons
 
 
 def _heuristic_only(gc: int, fast_mana: int) -> tuple[int, list[str]]:
@@ -240,7 +253,12 @@ def _custom_signals(
             fast_mana.append(card.name)
         if folded in _FREE_INTERACTION:
             free_int.append(card.name)
-        if _TUTOR_TEXT in card.oracle_text.casefold() and "Land" not in card.type_line:
+        # Front-face type line so an MDFC tutor-front/land-back still counts; and
+        # exclude land ramp ("...for a basic land card") so Cultivate isn't a
+        # "tutor". Informational count only (off the official rubric).
+        front_type = card.type_line.split("//", 1)[0]
+        oracle = card.oracle_text.casefold()
+        if _TUTOR_TEXT in oracle and "Land" not in front_type and "land card" not in oracle:
             tutors.append(card.name)
     return gc, tuple(fast_mana), tuple(free_int), tuple(tutors)
 

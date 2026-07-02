@@ -53,7 +53,9 @@ class ScryfallCard:
     color_identity: tuple[str, ...]
     image_url: str | None
     scryfall_uri: str | None
-    is_dfc: bool
+    # True when Scryfall returned multiple faces (DFC/transform, but also split
+    # and adventure) — i.e. "has faces", not strictly a double-faced card.
+    has_faces: bool
 
 
 class ScryfallError(RuntimeError):
@@ -219,5 +221,5 @@ def _parse_card(data: dict) -> ScryfallCard:
         color_identity=tuple(data.get("color_identity") or ()),
         image_url=image,
         scryfall_uri=data.get("scryfall_uri"),
-        is_dfc=bool(faces),
+        has_faces=bool(faces),
     )

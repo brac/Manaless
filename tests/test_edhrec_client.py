@@ -302,6 +302,17 @@ def test_filter_deck_hashes_skips_rows_without_urlhash():
     assert filter_deck_hashes(table) == ["ok"]
 
 
+def test_filter_deck_hashes_treats_missing_price_as_unknown():
+    # A row without a numeric price is unknown, not $0: it survives BOTH bounds (D14).
+    table = [
+        {"urlhash": "priced", "savedate": "2026-06-01", "price": 100},
+        {"urlhash": "nopriced", "savedate": "2026-05-01"},  # no price field
+    ]
+    assert "nopriced" in filter_deck_hashes(table, min_price=50)   # not excluded as $0
+    assert "nopriced" in filter_deck_hashes(table, max_price=50)   # still included
+    assert "priced" not in filter_deck_hashes(table, max_price=50)  # real price filtered
+
+
 def test_filter_deck_hashes_handles_null_savedate():
     # A stored ``"savedate": null`` must not crash the sort (None < str); nulls last.
     table = [

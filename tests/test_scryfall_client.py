@@ -55,14 +55,14 @@ def test_parses_normal_card(tmp_path):
     assert card.type_line == "Artifact"
     assert card.mana_value == 1.0
     assert card.image_url == "https://img/solring.jpg"
-    assert card.is_dfc is False
+    assert card.has_faces is False
     assert card.color_identity == ()
 
 
 def test_dfc_falls_back_to_front_face_image_and_concatenates_oracle(tmp_path):
     http = _http(tmp_path, lambda r: httpx.Response(200, json=DFC))
     card = get_card_metadata(http, "Jace, Vryn's Prodigy")
-    assert card.is_dfc is True
+    assert card.has_faces is True
     assert card.image_url == "https://img/jace-front.jpg"  # face 0
     assert "FRONT" in card.oracle_text and "BACK" in card.oracle_text
     assert card.type_line == "Legendary Creature — Human Wizard"
@@ -116,7 +116,7 @@ def test_get_collection_matches_dfc_by_front_face(tmp_path):
     http = _http(tmp_path, _collection_handler({"Jace, Vryn's Prodigy": DFC}))
     by_name, not_found = get_collection(http, ["Jace, Vryn's Prodigy"])
     card = by_name["Jace, Vryn's Prodigy"]  # keyed by REQUESTED name, not returned
-    assert card.is_dfc is True
+    assert card.has_faces is True
     assert "FRONT" in card.oracle_text
 
 

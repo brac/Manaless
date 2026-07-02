@@ -44,7 +44,7 @@ class Card:
     color_identity: tuple[str, ...] = ()
     image_url: str | None = None
     scryfall_uri: str | None = None
-    is_dfc: bool = False
+    has_faces: bool = False  # multi-face card (DFC/split/adventure); metadata only
     resolved: bool = True
 
     @property
@@ -111,7 +111,11 @@ class DeckModel:
         merged, found = [], False
         for existing in self.cards:
             if norm_name(existing.name) == key:
-                merged.append(replace(card, quantity=existing.quantity + card.quantity))
+                # Keep the enriched side's metadata on a merge: adding an
+                # unresolved copy (Scryfall down) must not blank an already-enriched
+                # entry and blind the oracle-text heuristics (D3).
+                base = existing if existing.resolved and not card.resolved else card
+                merged.append(replace(base, quantity=existing.quantity + card.quantity))
                 found = True
             else:
                 merged.append(existing)
@@ -120,8 +124,26 @@ class DeckModel:
         return self._substituted(tuple(merged))
 
     def substitute(self, old_name: str, new_card: Card) -> "DeckModel":
-        """Swap ``old_name`` out for ``new_card`` (remove then add)."""
-        return self.remove(old_name).add(new_card)
+        """Swap ONE copy of ``old_name`` for ``new_card`` (one-for-one).
+
+        A multi-copy entry (e.g. ``10 Forest``) loses a single copy, not the whole
+        stack — swapping one basic must not delete the other nine (D2). A singleton
+        entry is removed outright. The explicit ✕ ``remove`` still drops whole
+        entries; only the swap flow is one-for-one.
+        """
+        key = norm_name(old_name)
+        kept, found = [], False
+        for c in self.cards:
+            if not found and norm_name(c.name) == key:
+                found = True
+                if c.quantity > 1:
+                    kept.append(replace(c, quantity=c.quantity - 1))
+                # quantity 1 -> drop the entry entirely
+            else:
+                kept.append(c)
+        if not found:
+            raise KeyError(f"{old_name!r} is not in the mainboard")
+        return self._substituted(tuple(kept)).add(new_card)
 
     def _substituted(self, cards: tuple[Card, ...]) -> "DeckModel":
         """New model with a changed mainboard; source provenance cleared."""

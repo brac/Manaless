@@ -72,7 +72,9 @@ Recomputed on every edit to the deck model:
 - `alt_wins` — from Scryfall explicit scan.
 - `fallback_plan` — from the non-combo heuristic; the deck's "plan B" or its
   actual plan if it isn't a combo deck.
-- `combo_completeness` — derived from "Add 1" data; surfaces near-complete lines.
+- `combo_completeness` — reports assembled combos first (`"N combo(s) complete"`)
+  when any are fully present; otherwise falls back to the nearest "Add 1" line
+  (`"X of Y pieces"`) so a genuine near-miss still surfaces.
 
 ## Build notes
 - Cache Spellbook results by decklist hash; only re-call when the list changes.

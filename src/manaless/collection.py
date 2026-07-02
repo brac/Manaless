@@ -95,7 +95,9 @@ class Collection:
     # --- mutation --------------------------------------------------------
     def add(self, name: str, quantity: int = 1) -> None:
         name = name.strip()
-        if not name:
+        if not name or quantity <= 0:
+            # A zero/negative quantity is a phantom entry: it would pollute
+            # ``distinct``/``__len__``/``__bool__`` and make ``total`` go negative.
             return
         key = _key(name)
         self.counts[key] = self.counts.get(key, 0) + quantity

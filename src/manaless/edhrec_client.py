@@ -373,21 +373,27 @@ def filter_deck_hashes(
     """Deck ids from a deck table, most-recent-first, optionally price-banded.
 
     Price is a crude bracket pre-filter (cEDH skews expensive — §7), not the
-    estimate itself.
+    estimate itself. A row with **no** numeric price is treated as *unknown* and
+    kept regardless of the bounds — excluding it from ``min_price`` while including
+    it under ``max_price`` (the old ``0`` default) was inconsistent.
     """
     rows = list(table)
     if min_price is not None:
-        rows = [row for row in rows if _price(row) >= min_price]
+        rows = [row for row in rows if _price(row) is None or _price(row) >= min_price]
     if max_price is not None:
-        rows = [row for row in rows if _price(row) <= max_price]
+        rows = [row for row in rows if _price(row) is None or _price(row) <= max_price]
     # `or ""` (not a default) so a stored ``"savedate": null`` sorts as empty
     # instead of raising on ``None < str``; null-dated rows land last.
     rows.sort(key=lambda row: row.get("savedate") or "", reverse=True)
     return [row["urlhash"] for row in rows if row.get("urlhash")]
 
 
-def _price(row: dict) -> float:
+def _price(row: dict) -> float | None:
+    """Numeric price for a row, or ``None`` when absent/unparseable (unknown)."""
+    raw = row.get("price")
+    if raw is None or raw == "":
+        return None
     try:
-        return float(row.get("price") or 0)
+        return float(raw)
     except (TypeError, ValueError):
-        return 0.0
+        return None

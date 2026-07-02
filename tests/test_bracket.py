@@ -95,6 +95,39 @@ def test_edhrec_label_preferred_for_unmodified_deck():
     assert out.tag == "S"  # still surfaced as a cross-check
 
 
+def test_uniform_floor_lifts_mld_and_gc_dense_decks():
+    # P + mass land denial -> 4 (used to resolve to 3); O + 5 GCs -> 4 (D4).
+    p_mld = evaluate_bracket(_deck([Card("Armageddon", 1)]), _estimate("P", cards=[_mld("Armageddon")]))
+    assert p_mld.bracket == 4
+    o_gc = evaluate_bracket(
+        _deck([Card(f"GC{i}", 1) for i in range(5)]),
+        _estimate("O", cards=[_gc(f"GC{i}") for i in range(5)]),
+    )
+    assert o_gc.bracket == 4
+    # No power signals -> precon-like decks still cluster at 2.
+    assert evaluate_bracket(_deck([Card("X", 1)]), _estimate("C")).bracket == 2
+    assert evaluate_bracket(_deck([Card("X", 1)]), _estimate("E")).bracket == 2
+
+
+def test_extra_turn_density_surfaces_as_reason():
+    cards = [ClassifiedCard(f"Turn {i}", False, False, False, True) for i in range(3)]
+    out = evaluate_bracket(_deck([Card(f"Turn {i}", 1) for i in range(3)]), _estimate("C", cards=cards))
+    assert out.extra_turns == 3
+    assert any("extra-turn" in r for r in out.reasons)  # informational only
+
+
+def test_tutor_scan_front_face_and_excludes_land_ramp():
+    deck = _deck([
+        Card("MDFC Tutor", 1, type_line="Sorcery // Land",
+             oracle_text="Search your library for a creature card."),
+        Card("Cultivate", 1, type_line="Sorcery",
+             oracle_text="Search your library for up to two basic land cards, then shuffle."),
+    ])
+    out = evaluate_bracket(deck, _estimate("C"))
+    assert "MDFC Tutor" in out.tutors      # front face is Sorcery, not Land
+    assert "Cultivate" not in out.tutors   # land ramp, not a tutor
+
+
 def test_custom_signals_detected():
     deck = _deck([
         Card("Sol Ring", 1),

@@ -1,0 +1,8 @@
+# Normalise line endings so a WSL + Windows dual checkout stops rewriting every
+# line of a file on each `git add`. Git stores text with LF and converts to the
+# platform's native ending on checkout.
+* text=auto
+
+# Scripts pin their required ending regardless of the checkout platform.
+*.ps1 text eol=crlf
+*.sh  text eol=lf

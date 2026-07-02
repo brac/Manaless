@@ -86,6 +86,17 @@ def build_deck(
     )
 
 
+def enrich_card(enrich: Enricher, name: str, *, quantity: int = 1) -> Card:
+    """Enrich a single card name into a `Card` (build step 4).
+
+    The network round-trip lives here, so a caller holding a lock can enrich
+    *before* taking it (keeping the lock to the pure read-modify-write). An
+    unresolvable name comes back as `Card(resolved=False)` rather than raising.
+    """
+    meta = enrich([name]).get(name)
+    return _to_card(quantity, name, meta)
+
+
 def substitute_card(
     enrich: Enricher,
     deck: DeckModel,
@@ -102,8 +113,7 @@ def substitute_card(
     the same injected `enrich` callable as `build_deck`; an unresolvable name is
     kept as `Card(resolved=False)` rather than rejected.
     """
-    meta = enrich([new_name]).get(new_name)
-    return deck.substitute(old_name, _to_card(quantity, new_name, meta))
+    return deck.substitute(old_name, enrich_card(enrich, new_name, quantity=quantity))
 
 
 def add_card(
@@ -118,8 +128,7 @@ def add_card(
     Symmetric with `substitute_card` — used by the "Add 1 → completes a combo"
     one-click action. Returns a new `DeckModel` (provenance cleared by `.add`).
     """
-    meta = enrich([name]).get(name)
-    return deck.add(_to_card(quantity, name, meta))
+    return deck.add(enrich_card(enrich, name, quantity=quantity))
 
 
 def _pick_most_recent(edhrec: EdhrecClient, commander: str) -> tuple[str, int | None]:

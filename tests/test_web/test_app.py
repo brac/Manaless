@@ -66,16 +66,24 @@ def _enrich(names):
     return {n: _meta(n) for n in names if n != "Bogus Card"}
 
 
-# A tiny fake commander pool, EDHREC-ranked, paged 2-per-page so tests can walk
-# pagination without needing 60+ names.
-_COMMANDERS = ["Atraxa, Praetors' Voice", "Edgar Markov", "The Ur-Dragon", "Yuriko"]
+# A fake commander pool that emulates Scryfall's real page size (175/page): the
+# app sub-paginates each Scryfall page into UI pages of 60, so the fake must hand
+# back a big page, not pre-slice it. Named commanders for the filter/autocomplete
+# tests, plus enough 'a'-containing fillers to give the "a" search a real 2nd UI page.
+_SCRYFALL_PAGE = 175
+_COMMANDERS = (
+    ["Atraxa, Praetors' Voice", "Edgar Markov", "The Ur-Dragon", "Yuriko"]
+    + [f"Arcades Variant {i}" for i in range(70)]  # all contain 'a'
+)
 
 
 def _fake_search(query, page):
     pool = [c for c in _COMMANDERS if query.casefold() in c.casefold()] if query else _COMMANDERS
-    start = (page - 1) * 2
-    window = pool[start : start + 2]
-    return CommanderSearch(names=tuple(window), has_more=start + 2 < len(pool), total=len(pool))
+    start = (page - 1) * _SCRYFALL_PAGE
+    window = pool[start : start + _SCRYFALL_PAGE]
+    return CommanderSearch(
+        names=tuple(window), has_more=start + _SCRYFALL_PAGE < len(pool), total=len(pool)
+    )
 
 
 def _fake_autocomplete(query):
@@ -330,7 +338,9 @@ def test_owned_cards_flagged_in_builder(client, owned):
     owned.add("Sol Ring", 1)  # mutate the Collection the app sees
     r = _build(client)
     assert "✓ owned" in r.text
-    assert "You own" in r.text and "1</strong> of 2" in r.text
+    # Counts derive from deck_diff now: needed = 3 non-basics (commander included),
+    # owned = 1, so the header reads "1 of 3" and agrees with the buy count.
+    assert "You own" in r.text and "1</strong> of 3" in r.text
 
 
 # --- step 6: deck-diff buy ----------------------------------------------
@@ -513,3 +523,203 @@ def test_api_autocomplete_commander(client):
 def test_api_autocomplete_empty_query(client):
     r = client.get("/api/autocomplete", params={"q": "", "kind": "card"})
     assert r.json() == []
+
+
+# --- W1: commander search sub-paginates one Scryfall page ----------------
+
+def test_commander_search_subpaginates_one_scryfall_page(client):
+    # One Scryfall page (175 names) fills 3 UI pages of 60; the Scryfall page only
+    # advances every 3 UI pages, and no names are silently dropped.
+    seen_pages = []
+    page1 = [f"Cmd {i:03d}" for i in range(175)]
+    tail = [f"Tail {i}" for i in range(55)]
+
+    def spy_search(query, page):
+        seen_pages.append(page)
+        return CommanderSearch(
+            names=tuple(page1 if page == 1 else tail),
+            has_more=(page == 1),
+            total=230,
+        )
+
+    app.dependency_overrides[get_search] = lambda: spy_search
+    try:
+        r2 = client.get("/commanders", params={"q": "x", "page": 2})
+        assert "Cmd 060" in r2.text and "Cmd 119" in r2.text  # names 61–120
+        assert "Cmd 059" not in r2.text and "Cmd 120" not in r2.text
+        assert seen_pages == [1]  # UI page 2 is still Scryfall page 1
+        seen_pages.clear()
+        r4 = client.get("/commanders", params={"q": "x", "page": 4})
+        assert seen_pages == [2]  # UI page 4 -> Scryfall page 2
+        assert "Tail 0" in r4.text
+    finally:
+        app.dependency_overrides[get_search] = lambda: _fake_search
+
+
+# --- W2: per-tab sid stops a second tab hijacking the first --------------
+
+def test_page_sid_targets_the_right_session(client):
+    _build(client)
+    sid_a = client.cookies.get("manaless_sid")
+    _build(client)  # a "second tab": mints sid B, cookie now points at B
+    sid_b = client.cookies.get("manaless_sid")
+    assert sid_a and sid_b and sid_a != sid_b
+    # Remove from A via its page-carried sid (cookie is B's now).
+    ra = client.post("/build/remove", data={"name": "Counterspell", "sid": sid_a})
+    assert "2 cards" in ra.text
+    # B is untouched: it still has Counterspell to remove (would 404-ish otherwise).
+    rb = client.post("/build/remove", data={"name": "Counterspell", "sid": sid_b})
+    assert "2 cards" in rb.text and "is not in the deck" not in rb.text
+
+
+# --- W3: htmx lost-session signals a client redirect, not a doc swap ------
+
+def test_lost_session_htmx_returns_204_hx_redirect(client):
+    client.cookies.clear()
+    r = client.post(
+        "/build/remove", data={"name": "X"},
+        headers={"HX-Request": "true"}, follow_redirects=False,
+    )
+    assert r.status_code == 204
+    assert r.headers.get("HX-Redirect") == "/"
+
+
+def test_lost_session_non_htmx_still_303(client):
+    client.cookies.clear()
+    r = client.post("/build/remove", data={"name": "X"}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+# --- W4: cross-origin POSTs are rejected ---------------------------------
+
+def test_cross_origin_build_rejected(client):
+    r = client.post(
+        "/build", data={"commander": "Atraxa, Praetors' Voice", "deck_id": "newest"},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert r.status_code == 403
+
+
+def test_same_origin_build_allowed(client):
+    r = client.post(
+        "/build", data={"commander": "Atraxa, Praetors' Voice", "deck_id": "newest"},
+        headers={"Origin": "http://testserver"},
+    )
+    assert r.status_code == 200
+
+
+def test_cross_origin_collection_import_rejected(client):
+    r = client.post(
+        "/collection/import",
+        files={"file": ("x.csv", b"Name\nSol Ring\n", "text/csv")},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert r.status_code == 403
+
+
+# --- W5: EDHREC / Spellbook failures surface gracefully ------------------
+
+def test_build_edhrec_error_shows_hint_not_500(client):
+    from manaless.edhrec_client import EdhrecError
+
+    class BoomEdhrec(FakeEdhrec):
+        def fetch_deck(self, deck_id):
+            raise EdhrecError("boom")
+
+    app.dependency_overrides[get_edhrec] = lambda: BoomEdhrec()
+    try:
+        r = client.post(
+            "/build", data={"commander": "Atraxa, Praetors' Voice", "deck_id": "newest"}
+        )
+        assert r.status_code == 200
+        assert "EDHREC" in r.text  # friendly hint, not a bare 500
+    finally:
+        app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()
+
+
+def test_commanders_survives_edhrec_connect_error(client):
+    import httpx
+
+    class DownEdhrec(FakeEdhrec):
+        def fetch_top_commanders(self):
+            raise httpx.ConnectError("no network")
+
+    app.dependency_overrides[get_edhrec] = lambda: DownEdhrec()
+    try:
+        r = client.get("/commanders")
+        assert r.status_code == 200
+        assert "Atraxa" in r.text  # Scryfall fallback engaged, not a 500
+    finally:
+        app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()
+
+
+def test_readouts_spellbook_unavailable_renders_retry(client, monkeypatch):
+    from manaless.spellbook_client import SpellbookUnavailable
+
+    def boom(http, deck):
+        raise SpellbookUnavailable("down")
+
+    monkeypatch.setattr(readout_mod, "find_my_combos", boom)
+    _build(client)
+    r = client.get("/build/readouts")
+    assert r.status_code == 200
+    assert 'id="readouts"' in r.text and "unavailable" in r.text.lower()
+
+
+# --- W6: header owned/missing agree with the buy count -------------------
+
+def test_header_missing_count_matches_buy(client, owned):
+    owned.add("Sol Ring", 1)  # own one of the two buyable non-basics
+    r = _build(client)
+    assert "2 to buy" in r.text  # header buy link
+    rb = client.get("/build/buy-missing")
+    assert "Counterspell" in rb.text and "Sol Ring" not in rb.text  # same 2 missing
+
+
+# --- W10: add validation + no silent singleton dupes ---------------------
+
+def test_add_blank_name_rejected(client):
+    _build(client)
+    r = client.post("/build/add", data={"name": "   "})
+    assert r.status_code == 200
+    assert "Enter a card name" in r.text
+    assert "3 cards" in r.text  # unchanged
+
+
+def test_add_duplicate_nonbasic_warns_without_merging(client):
+    _build(client)
+    r = client.post("/build/add", data={"name": "Sol Ring"})  # already in the deck
+    assert "already in the deck" in r.text
+    assert "3 cards" in r.text  # no merge to 2× Sol Ring
+
+
+# --- W15: paging past the last page never dead-ends ----------------------
+
+def test_popular_page_past_end_is_clamped(client):
+    r = client.get("/commanders", params={"page": 9})
+    assert r.status_code == 200
+    assert "The Ur-Dragon" in r.text or "Cmdr 61" in r.text  # a real page, not empty
+
+
+def test_search_page_past_end_offers_prev(client):
+    r = client.get("/commanders", params={"q": "a", "page": 3})
+    assert r.status_code == 200
+    assert "No more commanders on this page" in r.text
+    assert "page=2" in r.text  # a live prev link back
+
+
+# --- T6: over-100 warning fires above 100 and not at 100 -----------------
+
+def test_over_100_warning(client):
+    class BigEdhrec(FakeEdhrec):
+        def fetch_deck(self, deck_id):
+            return ["1 Atraxa, Praetors' Voice", "99 Forest"]  # 100 cards exactly
+
+    app.dependency_overrides[get_edhrec] = lambda: BigEdhrec()
+    try:
+        r = _build(client)
+        assert "over 100" not in r.text  # exactly 100 -> no warning
+        r2 = client.post("/build/add", data={"name": "Sol Ring"})  # -> 101
+        assert "over 100" in r2.text
+    finally:
+        app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()

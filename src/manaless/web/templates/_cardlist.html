@@ -1,3 +1,15 @@
+{#- Shared card face (image/placeholder + name + owned tag), used by both the
+   commander tiles and the mainboard tiles so the markup lives in one place. -#}
+{%- macro card_media(card) %}
+      {% if card.image_url %}
+        <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
+      {% else %}
+        <div class="noimg">{{ card.name }}</div>
+      {% endif %}
+      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
+        {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
+      </div>
+{%- endmacro -%}
 {% if deck.unresolved %}
 <p class="warn">Unenriched (Scryfall couldn't resolve): {{ deck.unresolved | join(', ') }}</p>
 {% endif %}
@@ -14,15 +26,7 @@
   <h3>Commander <span class="muted">({{ deck.commanders | length }})</span></h3>
   <div class="grid">
     {% for card in deck.commanders %}
-    <div class="card commander{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">
-      {% if card.image_url %}
-        <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
-      {% else %}
-        <div class="noimg">{{ card.name }}</div>
-      {% endif %}
-      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
-        {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
-      </div>
+    <div class="card commander{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">{{ card_media(card) }}
       <div class="cardctl">
         <span class="cmd-tag" title="Your commander — export includes it">★ commander</span>
         <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
@@ -39,15 +43,7 @@
   <h3>{{ category }} <span class="muted">({{ cards | sum(attribute='quantity') }})</span></h3>
   <div class="grid">
     {% for card in cards %}
-    <div class="card{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">
-      {% if card.image_url %}
-        <img src="{{ card.image_url }}" alt="{{ card.name }}" loading="lazy">
-      {% else %}
-        <div class="noimg">{{ card.name }}</div>
-      {% endif %}
-      <div class="cardname">{% if card.quantity > 1 %}{{ card.quantity }}× {% endif %}{{ card.name }}
-        {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
-      </div>
+    <div class="card{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">{{ card_media(card) }}
       {% set pop = popularity.get(card.name) if popularity else none %}
       {% if pop %}
       <div class="pop" title="Run in {{ pop.num_decks }} of {{ pop.potential_decks }} EDHREC decks for this commander">

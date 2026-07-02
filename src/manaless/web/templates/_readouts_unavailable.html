@@ -1,0 +1,9 @@
+{# Shown when Commander Spellbook is unreachable. The rest of the builder still
+   works; the user can retry the combo/bracket panel without losing their deck. #}
+<div id="readouts">
+  <div class="panel readouts-error">
+    <p class="warn">Combo &amp; bracket data is unavailable right now — Commander Spellbook didn’t respond.</p>
+    <button type="button" class="btn ghost"
+            hx-get="/build/readouts" hx-target="#readouts" hx-swap="outerHTML">Retry</button>
+  </div>
+</div>

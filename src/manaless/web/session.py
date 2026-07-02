@@ -1,35 +1,36 @@
 """In-memory build sessions — the current deck a browser tab is editing.
 
 A build-in-progress is ephemeral (the durable artifact is the exported `.dck`),
-so sessions live in a module-level dict, not on disk. Each is keyed by a cookie
+so sessions live in a module-level store, not on disk. Each is keyed by a cookie
 (`manaless_sid`) and guarded by its own lock, since HTMX can fire overlapping
 substitution posts for the same tab. Single-user localhost tool — deliberately
-minimal (no eviction, no persistence, no auth).
+minimal (no persistence, no auth). The store is LRU-capped so a long session of
+rebuilds (each mints a fresh sid) can't leak orphaned decks + enriched cards
+without bound.
 """
 
 from __future__ import annotations
 
 import secrets
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from threading import Lock
 
 from manaless.deck_model import DeckModel
 from manaless.edhrec_client import PopularityIndex
 from manaless.scryfall_client import ScryfallCard
-from manaless.web.readout import Readouts
 
 COOKIE_NAME = "manaless_sid"
+# Keep a handful of recent builds live (multiple tabs, back-button reloads) but
+# evict the oldest beyond this so orphaned sessions don't accumulate forever.
+MAX_SESSIONS = 32
 
 
 @dataclass
 class BuildSession:
-    """One tab's current build: the deck, its readouts, and commander card stats."""
+    """One tab's current build: the deck, palette, and commander card stats."""
 
     deck: DeckModel
-    # Win-condition + bracket readouts. Computed lazily (the two Spellbook POSTs
-    # cost ~2s), so an edit updates ``deck`` instantly and the readouts panel
-    # fetches ``/build/readouts`` in the background. ``None`` until first computed.
-    readouts: Readouts | None = None
     # Aggregate EDHREC card popularity for this commander; fetched once at build
     # time (it doesn't change as the user substitutes within the same commander).
     popularity: PopularityIndex = field(default_factory=lambda: PopularityIndex({}))
@@ -47,10 +48,10 @@ class BuildSession:
 
 
 class SessionStore:
-    """Thread-safe map of session id -> BuildSession."""
+    """Thread-safe, LRU-capped map of session id -> BuildSession."""
 
     def __init__(self) -> None:
-        self._sessions: dict[str, BuildSession] = {}
+        self._sessions: "OrderedDict[str, BuildSession]" = OrderedDict()
         self._lock = Lock()
 
     def new_id(self) -> str:
@@ -60,11 +61,17 @@ class SessionStore:
         if not sid:
             return None
         with self._lock:
-            return self._sessions.get(sid)
+            session = self._sessions.get(sid)
+            if session is not None:
+                self._sessions.move_to_end(sid)  # mark most-recently-used
+            return session
 
     def set(self, sid: str, session: BuildSession) -> None:
         with self._lock:
             self._sessions[sid] = session
+            self._sessions.move_to_end(sid)
+            while len(self._sessions) > MAX_SESSIONS:
+                self._sessions.popitem(last=False)  # evict the oldest
 
     def reset(self, sid: str | None) -> None:
         if not sid:

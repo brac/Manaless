@@ -33,6 +33,14 @@
     <a class="btn ghost" href="/commanders?q={{ q | urlencode }}&page={{ page + 1 }}">next →</a>
     {% else %}<span class="btn ghost disabled">next →</span>{% endif %}
   </nav>
+{% elif has_prev %}
+  {# Past the last page: don't dead-end — offer a way back. #}
+  <p class="muted">No more commanders on this page.</p>
+  <nav class="pager">
+    <a class="btn ghost" href="/commanders?q={{ q | urlencode }}&page={{ page - 1 }}">← prev</a>
+    <span class="muted">page {{ page }}</span>
+    <span class="btn ghost disabled">next →</span>
+  </nav>
 {% else %}
   <p class="warn">
     No commanders found{% if q %} for “{{ q }}”{% endif %}. Try a different spelling

@@ -1,13 +1,12 @@
 """web.session — the in-memory build-session store."""
 
 from manaless.deck_model import Card, DeckModel
-from manaless.web.readout import Readouts
-from manaless.web.session import BuildSession, SessionStore
+from manaless.web.session import MAX_SESSIONS, BuildSession, SessionStore
 
 
 def _session():
     deck = DeckModel(commanders=(Card("Cmd", 1),), cards=())
-    return BuildSession(deck=deck, readouts=Readouts(win_conditions=None, bracket=None))
+    return BuildSession(deck=deck)
 
 
 def test_set_get_roundtrip():
@@ -41,3 +40,25 @@ def test_session_has_its_own_lock():
     # used to serialise overlapping HTMX edits for one tab
     with s.lock:
         assert s.lock.locked()
+
+
+def test_store_evicts_oldest_beyond_cap():
+    store = SessionStore()
+    sids = []
+    for _ in range(MAX_SESSIONS + 1):
+        sid = store.new_id()
+        store.set(sid, _session())
+        sids.append(sid)
+    assert store.get(sids[0]) is None          # oldest evicted
+    assert store.get(sids[-1]) is not None      # newest kept
+
+
+def test_access_refreshes_recency():
+    store = SessionStore()
+    first = store.new_id()
+    store.set(first, _session())
+    for _ in range(MAX_SESSIONS - 1):
+        store.set(store.new_id(), _session())
+    store.get(first)  # touch -> most recently used
+    store.set(store.new_id(), _session())  # one more -> evicts the now-oldest
+    assert store.get(first) is not None  # survived because it was refreshed

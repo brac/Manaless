@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
+{# Carry the per-tab session id on every htmx mutation (W2): a second tab that
+   mints its own sid/cookie can't hijack this tab's deck. Endpoints fall back to
+   the cookie when no sid is posted (plain GET /build reload). #}
+<div id="builder" hx-vals='{"sid": "{{ sid }}"}'>
 <div class="topbar">
   <div class="cmd">
     <a href="/" class="back">←</a>
@@ -47,4 +51,5 @@
 <div id="cardpreview" class="cardpreview" hidden>
   <img alt="">
 </div>
+</div>{# /#builder #}
 {% endblock %}

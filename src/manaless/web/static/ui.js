@@ -57,10 +57,15 @@
     if (modal && !modal.hidden && e.target.closest("#cardmodal")) closeModal();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") {
-      closeModal();
-      closeSwap();
+    if (e.key !== "Escape") return;
+    // If the autocomplete menu is open, Escape dismisses only the menu — leave the
+    // swap modal it lives in alone (W12). `box`/`hide` are hoisted from below.
+    if (typeof box !== "undefined" && !box.hidden) {
+      hide();
+      return;
     }
+    closeModal();
+    closeSwap();
   });
   // A successful swap (suggestion submit, or autocomplete choose -> requestSubmit)
   // refreshes the board via OOB swaps; close the modal once it lands.
@@ -169,6 +174,16 @@
   document.addEventListener("mouseout", function (e) {
     var el = e.target.closest ? e.target.closest("[data-img]") : null;
     if (el && preview && !el.contains(e.relatedTarget)) {
+      hidePreview();
+    }
+  });
+  // A palette "+" click OOB-replaces #palette, removing the hovered node before any
+  // mouseout can fire — so the floating preview would stay pinned. Clear it when the
+  // palette is swapped (mirrors the swap-modal fix in closeSwap). (W13)
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    var t = e.target;
+    if (!t) return;
+    if (t.id === "palette" || (t.querySelector && t.querySelector("#palette"))) {
       hidePreview();
     }
   });

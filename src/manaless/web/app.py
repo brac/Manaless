@@ -15,8 +15,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
+import httpx
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,22 +27,33 @@ from manaless.buy import deck_diff, is_basic_land, mass_entry_url, single_card_u
 from manaless.card_category import category_of
 from manaless.collection import Collection
 from manaless.deck_builder import (
+    CommanderNotFound,
     NoDecksAvailable,
-    add_card,
     build_deck,
-    substitute_card,
+    enrich_card,
 )
-from manaless.edhrec_client import EdhrecClient
+from manaless.edhrec_client import EdhrecClient, EdhrecError
 from manaless.http.cache import DiskCache
 from manaless.http.client import HttpClient
+from manaless.names import norm_name
 from manaless.paths import CACHE_DIR, PROJECT_ROOT
 from manaless.scryfall_client import (
     autocomplete_names,
     get_collection,
     search_commanders,
 )
+from manaless.spellbook_client import SpellbookUnavailable
 from manaless.web.readout import compute_readouts
 from manaless.web.session import COOKIE_NAME, BuildSession, SessionStore
+
+# Friendly EDHREC-failure text, including the §4 runbook hint. Shown instead of a
+# bare 500 when a deck/commander fetch fails (build-id rotation is auto-handled;
+# a persistent failure usually means EDHREC is blocking requests).
+_EDHREC_HINT = (
+    "EDHREC didn’t respond as expected. If it redeployed, the build ID was "
+    "refreshed automatically — try again. If this keeps happening, EDHREC may be "
+    "rate-limiting or blocking requests; wait a bit and retry."
+)
 
 _HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
@@ -110,9 +123,45 @@ def get_collection_path(request: Request) -> Path:
 
 # --- helpers -------------------------------------------------------------
 
-def _owned_summary(deck, owned: Collection) -> tuple[int, int]:
-    """``(distinct mainboard cards owned, distinct mainboard cards)`` for the header."""
-    return sum(1 for c in deck.cards if owned.owns(c.name)), len(deck.cards)
+def _session_lost(request: Request) -> Response:
+    """Response for a request whose session is gone (server restart, expiry).
+
+    An htmx request must not follow a 303 to ``/`` — htmx would swap the whole
+    homepage document into a fragment target. Signal a client-side redirect
+    instead; a plain browser navigation still gets the ordinary 303.
+    """
+    if request.headers.get("HX-Request"):
+        return Response(status_code=204, headers={"HX-Redirect": "/"})
+    return RedirectResponse("/", status_code=303)
+
+
+def require_same_origin(request: Request) -> None:
+    """Reject a cross-origin state-changing POST (a minimal CSRF guard).
+
+    Browsers always send ``Origin`` on a cross-site form POST; a same-origin htmx
+    post sends a matching one. A request with no Origin/Referer at all (curl, the
+    test client) is allowed — this is a localhost tool, not a public service.
+    """
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if origin and urlparse(origin).netloc != request.url.netloc:
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
+
+
+def _owned_summary(deck, owned: Collection) -> tuple[int, int, int]:
+    """``(owned, needed, missing)`` copies for the header, all from ``deck_diff``.
+
+    Derived from the *same* quantity-aware, basics-skipping source as the buy
+    count so the header can never contradict the "N to buy" figure beside it.
+    ``needed`` counts diff-eligible copies (non-basics across the whole deck);
+    ``missing`` is what the buy step would purchase; ``owned = needed - missing``.
+    """
+    needed = sum(
+        c.quantity
+        for c in deck.all_cards()
+        if not is_basic_land(c.name)
+    )
+    missing = sum(qty for qty, _ in deck_diff(deck, owned))
+    return needed - missing, needed, missing
 
 
 # Primary card type -> short tag shown on palette suggestions. Same precedence as
@@ -153,15 +202,22 @@ def _palette_view(cp, meta) -> dict:
 
 
 def _builder_ctx(
-    session: BuildSession, owned: Collection, *, flash: str | None = None, flash_kind: str = ""
+    session: BuildSession,
+    owned: Collection,
+    *,
+    flash: str | None = None,
+    flash_kind: str = "",
+    sid: str = "",
 ) -> dict:
-    have, total = _owned_summary(session.deck, owned)
+    have, total, missing = _owned_summary(session.deck, owned)
     return {
         "deck": session.deck,
         "owned": owned,
         "owned_have": have,
         "owned_total": total,
-        "missing_count": len(deck_diff(session.deck, owned)),
+        # Copies still to buy (quantity-aware, basics-skipped) — the same figure
+        # the buy page shows, so header and buy count agree.
+        "missing_count": missing,
         "popularity": session.popularity,
         "palette": [
             _palette_view(cp, session.palette_meta.get(cp.name))
@@ -171,17 +227,30 @@ def _builder_ctx(
         # success like "Added X", "" for the default warn tone used by errors).
         "flash": flash,
         "flash_kind": flash_kind,
+        # Per-tab session id echoed by every htmx mutation (W2).
+        "sid": sid,
     }
 
 
-def _render_builder(request, session, owned, *, flash=None, flash_kind=""):
+def _render_builder(request, session, owned, *, flash=None, flash_kind="", sid=""):
     """Full builder page for ``GET /build`` and the initial ``POST /build``.
 
     The readouts panel renders as a lazy placeholder that fetches
     ``/build/readouts`` on load, so the page paints without waiting on Spellbook.
     """
-    ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind)
+    ctx = _builder_ctx(session, owned, flash=flash, flash_kind=flash_kind, sid=sid)
     return templates.TemplateResponse(request, "build.html", ctx)
+
+
+def _resolve_session(request: Request, store: SessionStore, form_sid: str = "") -> tuple:
+    """Resolve the active session by page-carried sid, falling back to the cookie.
+
+    Carrying the sid in the page (not only the cookie) means a second tab that
+    mints its own sid can't hijack the first tab's edits (W2). Returns
+    ``(sid, session_or_None)``.
+    """
+    sid = (form_sid or "").strip() or (request.cookies.get(COOKIE_NAME) or "")
+    return sid, store.get(sid)
 
 
 def _render_update(request, session, owned, *, flash=None, flash_kind=""):
@@ -199,23 +268,28 @@ def _ensure_suggest_pool(session: BuildSession, enrich) -> None:
     functional categories so the swap modal can offer same-category replacements.
     Popularity + a card's category are fixed for the session, so this runs at most
     once: the build-time ``palette_meta`` seeds most of the enrichment, and only the
-    misses hit Scryfall (one batched, disk-cached call). Guarded by ``session.lock``
-    so two concurrent modal opens can't double-enrich.
+    misses hit Scryfall (one batched, disk-cached call). The enrichment happens
+    *outside* the lock so a modal open never serializes other edits behind a
+    multi-second network wait; the lock only guards the final double-checked write
+    (a lost race just wastes one recomputation — W9).
     """
+    if session.suggest_cat:
+        return
+    pool = session.popularity.excluding([])[:SUGGEST_POOL_LIMIT]
+    names = [cp.name for cp in pool]
+    meta = {n: session.palette_meta[n] for n in names if n in session.palette_meta}
+    misses = [n for n in names if n not in meta]
+    if misses:
+        meta.update(enrich(misses))  # network — outside the lock
+    cat = {
+        cp.name: category_of(meta[cp.name]) if cp.name in meta else "Other"
+        for cp in pool
+    }
     with session.lock:
-        if session.suggest_cat:
+        if session.suggest_cat:  # another request populated it while we computed
             return
-        pool = session.popularity.excluding([])[:SUGGEST_POOL_LIMIT]
-        names = [cp.name for cp in pool]
-        meta = {n: session.palette_meta[n] for n in names if n in session.palette_meta}
-        misses = [n for n in names if n not in meta]
-        if misses:
-            meta.update(enrich(misses))
         session.suggest_meta = meta
-        session.suggest_cat = {
-            cp.name: category_of(meta[cp.name]) if cp.name in meta else "Other"
-            for cp in pool
-        }
+        session.suggest_cat = cat
 
 
 # --- routes --------------------------------------------------------------
@@ -226,7 +300,12 @@ def index(request: Request):
 
 
 # How many EDHREC-ranked commanders to show per browse page (E2).
-COMMANDER_PAGE_SIZE = 60  # Scryfall search returns 175/page; we slice for a tidy grid.
+COMMANDER_PAGE_SIZE = 60  # a tidy grid; Scryfall itself returns 175/page.
+# Scryfall's search page size. One Scryfall page fills several UI pages, so we
+# fetch once and sub-paginate locally instead of requesting a fresh Scryfall page
+# per UI page (which would silently drop cards 61–175 of every page).
+SCRYFALL_PAGE_SIZE = 175
+UI_PAGES_PER_SCRYFALL = -(-SCRYFALL_PAGE_SIZE // COMMANDER_PAGE_SIZE)  # ceil = 3
 
 
 @app.get("/commanders", response_class=HTMLResponse)
@@ -246,23 +325,32 @@ def commanders(
     """
     q = q.strip()
     page = max(1, page)
-    # Popular browse: prefer EDHREC's deck-count ranking. If EDHREC is momentarily
-    # unavailable (403/network) it returns [], and we fall back to the Scryfall
-    # list below so the browse never dead-ends on "no commanders found".
-    ranked = edhrec.fetch_top_commanders() if not q else []
+    # Popular browse: prefer EDHREC's deck-count ranking. If EDHREC is unavailable
+    # (403/block/network), fall back to the Scryfall list below so the browse never
+    # dead-ends on "no commanders found".
+    try:
+        ranked = edhrec.fetch_top_commanders() if not q else []
+    except (EdhrecError, httpx.HTTPError):
+        ranked = []
     if ranked:
         total = len(ranked)
+        # Clamp: a page past the end would render an empty grid with no way back.
+        last_page = max(1, -(-total // COMMANDER_PAGE_SIZE))
+        page = min(page, last_page)
         start = (page - 1) * COMMANDER_PAGE_SIZE
         window = ranked[start : start + COMMANDER_PAGE_SIZE]
         items = [{"name": c.name, "decks": c.num_decks} for c in window]
         has_more = start + COMMANDER_PAGE_SIZE < total
     else:
-        # Named search, or the fallback when EDHREC's ranking is unavailable.
-        result = search(q, page)
-        names = list(result.names[:COMMANDER_PAGE_SIZE])
-        # ``has_more`` is Scryfall's flag for the *full* page; if we sliced below
-        # that, there's more on the next page regardless.
-        has_more = result.has_more or len(result.names) > COMMANDER_PAGE_SIZE
+        # Named search (or the EDHREC-unavailable fallback). Map several UI pages
+        # onto one Scryfall page so results 61–175 aren't dropped.
+        sub = (page - 1) % UI_PAGES_PER_SCRYFALL
+        scry_page = (page - 1) // UI_PAGES_PER_SCRYFALL + 1
+        result = search(q, scry_page)
+        names = list(result.names[sub * COMMANDER_PAGE_SIZE : (sub + 1) * COMMANDER_PAGE_SIZE])
+        # More UI pages remain if this Scryfall page has cards past our slice, or
+        # Scryfall itself reports another page.
+        has_more = len(result.names) > (sub + 1) * COMMANDER_PAGE_SIZE or result.has_more
         items = [{"name": name, "decks": None} for name in names]
         total = result.total
     return templates.TemplateResponse(
@@ -354,7 +442,12 @@ def decks(
 ):
     if sort not in DECK_SORTS:
         sort = "recent"
-    table = edhrec.fetch_deck_table(commander)
+    try:
+        table = edhrec.fetch_deck_table(commander)
+    except EdhrecError:
+        return templates.TemplateResponse(
+            request, "decks.html", {"commander": commander, "rows": [], "error": _EDHREC_HINT}
+        )
     ordered = _sort_deck_rows(table, sort)
     return templates.TemplateResponse(
         request,
@@ -370,7 +463,7 @@ def decks(
     )
 
 
-@app.post("/build", response_class=HTMLResponse)
+@app.post("/build", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
 def build(
     request: Request,
     commander: str = Form(...),
@@ -386,6 +479,14 @@ def build(
         return templates.TemplateResponse(
             request, "decks.html", {"commander": commander, "rows": [], "error": str(exc)}
         )
+    except CommanderNotFound as exc:
+        return templates.TemplateResponse(
+            request, "decks.html", {"commander": commander, "rows": [], "error": str(exc)}
+        )
+    except EdhrecError:
+        return templates.TemplateResponse(
+            request, "decks.html", {"commander": commander, "rows": [], "error": _EDHREC_HINT}
+        )
     # Readouts are computed lazily (the page's placeholder fetches /build/readouts),
     # so the builder paints as soon as the deck is enriched rather than after the
     # ~2s Spellbook round-trip.
@@ -397,7 +498,9 @@ def build(
     session = BuildSession(deck=deck, popularity=popularity, palette_meta=dict(palette_meta))
     sid = store.new_id()
     store.set(sid, session)
-    resp = _render_builder(request, session, owned)
+    # Pass the sid into the page (W2): every htmx mutation echoes it back, so a
+    # second tab that mints its own sid can't hijack the first tab's cookie.
+    resp = _render_builder(request, session, owned, sid=sid)
     resp.set_cookie(COOKIE_NAME, sid, httponly=True, samesite="lax")
     return resp
 
@@ -408,10 +511,16 @@ def build_page(
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
 ):
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    sid, session = _resolve_session(request, store)
     if session is None:
         return RedirectResponse("/", status_code=303)
-    return _render_builder(request, session, owned)
+    return _render_builder(request, session, owned, sid=sid)
+
+
+def _deck_contains(deck, name: str) -> bool:
+    """True if a card matching ``name`` (canonical key) is already in the deck."""
+    key = norm_name(name)
+    return any(norm_name(c.name) == key for c in deck.all_cards())
 
 
 @app.post("/build/substitute", response_class=HTMLResponse)
@@ -419,34 +528,46 @@ def substitute(
     request: Request,
     old_name: str = Form(...),
     new_name: str = Form(...),
+    sid: str = Form(""),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
 ):
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store, sid)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
     new_name = new_name.strip()
     if not new_name:
         return _render_update(request, session, owned, flash="Enter a card name to swap in.")
+    # A swap that would duplicate a non-basic already in the deck merges quantities
+    # (a singleton-format violation) — warn instead (W10). A swap to itself is a no-op.
+    if (
+        norm_name(new_name) != norm_name(old_name)
+        and not is_basic_land(new_name)
+        and _deck_contains(session.deck, new_name)
+    ):
+        return _render_update(request, session, owned, flash=f"{new_name} is already in the deck.")
+    # Enrich outside the lock (network); hold the lock only for the deck edit (W9).
+    card = enrich_card(enrich, new_name)
     with session.lock:
         try:
-            deck = substitute_card(enrich, session.deck, old_name, new_name)
+            deck = session.deck.substitute(old_name, card)
         except KeyError:
             return _render_update(request, session, owned, flash=f"{old_name!r} is not in the deck.")
         session.deck = deck  # readouts recompute lazily via /build/readouts
-        note = _unresolved_note(deck, new_name)
-        if note:
-            return _render_update(request, session, owned, flash=note)
-        return _render_update(
-            request, session, owned, flash=f"Swapped in {new_name}", flash_kind="ok"
-        )
+    note = _unresolved_note(deck, new_name)
+    if note:
+        return _render_update(request, session, owned, flash=note)
+    return _render_update(
+        request, session, owned, flash=f"Swapped in {new_name}", flash_kind="ok"
+    )
 
 
 @app.get("/build/suggest", response_class=HTMLResponse)
 def build_suggest(
     request: Request,
     old_name: str = "",
+    sid: str = "",
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
 ):
@@ -456,12 +577,12 @@ def build_suggest(
     most-played cards of that same category not already in the deck — ranked by
     play-rate, synergy as a tiebreak. Fetched lazily by the swap modal's ``hx-get``.
     """
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store, sid)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
 
-    folded = old_name.strip().casefold()
-    card = next((c for c in session.deck.all_cards() if c.name.casefold() == folded), None)
+    key = norm_name(old_name)
+    card = next((c for c in session.deck.all_cards() if norm_name(c.name) == key), None)
     _ensure_suggest_pool(session, enrich)
     if card is not None:
         category = category_of(card)
@@ -475,21 +596,10 @@ def build_suggest(
     ]
     cands.sort(key=lambda cp: (cp.num_decks, cp.synergy), reverse=True)
 
-    suggestions = []
-    for cp in cands[:SUGGEST_LIMIT]:
-        meta = session.suggest_meta.get(cp.name)
-        abbr, full = _type_tag(meta.type_line) if meta else ("", "")
-        suggestions.append(
-            {
-                "name": cp.name,
-                "percent": cp.percent,
-                "num_decks": cp.num_decks,
-                "potential_decks": cp.potential_decks,
-                "type_abbr": abbr,
-                "type_full": full,
-                "image_url": meta.image_url if meta else None,
-            }
-        )
+    suggestions = [
+        _palette_view(cp, session.suggest_meta.get(cp.name))
+        for cp in cands[:SUGGEST_LIMIT]
+    ]
     return templates.TemplateResponse(
         request,
         "_swap_suggestions.html",
@@ -501,61 +611,74 @@ def build_suggest(
 def remove(
     request: Request,
     name: str = Form(...),
+    sid: str = Form(""),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
 ):
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store, sid)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
     with session.lock:
         try:
             deck = session.deck.remove(name)
         except KeyError:
             return _render_update(request, session, owned, flash=f"{name!r} is not in the deck.")
         session.deck = deck  # readouts recompute lazily via /build/readouts
-        # No name in the toast: the card visibly leaves the list and the count
-        # ticks down, and a name here would read as if it were still present.
-        return _render_update(request, session, owned, flash="Removed 1 card", flash_kind="ok")
+    # No name in the toast: the card visibly leaves the list and the count
+    # ticks down, and a name here would read as if it were still present.
+    return _render_update(request, session, owned, flash="Removed 1 card", flash_kind="ok")
 
 
 @app.post("/build/add", response_class=HTMLResponse)
 def add(
     request: Request,
     name: str = Form(...),
+    sid: str = Form(""),
     enrich=Depends(get_enrich),
     store: SessionStore = Depends(get_store),
     owned: Collection = Depends(get_owned),
 ):
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store, sid)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
     name = name.strip()
+    if not name:  # W10: reject a blank add, as substitute already does
+        return _render_update(request, session, owned, flash="Enter a card name to add.")
+    # A non-basic already in the deck would silently merge to quantity 2 (a
+    # singleton violation); warn instead. Basics legitimately stack (W10).
+    if not is_basic_land(name) and _deck_contains(session.deck, name):
+        return _render_update(request, session, owned, flash=f"{name} is already in the deck.")
+    # Enrich outside the lock (network); hold the lock only for the deck edit (W9).
+    card = enrich_card(enrich, name)
     with session.lock:
-        deck = add_card(enrich, session.deck, name)
-        session.deck = deck  # readouts recompute lazily via /build/readouts
-        note = _unresolved_note(deck, name)
-        if note:
-            return _render_update(request, session, owned, flash=note)
-        return _render_update(request, session, owned, flash=f"Added {name}", flash_kind="ok")
+        session.deck = session.deck.add(card)  # readouts recompute lazily
+        deck = session.deck
+    note = _unresolved_note(deck, name)
+    if note:
+        return _render_update(request, session, owned, flash=note)
+    return _render_update(request, session, owned, flash=f"Added {name}", flash_kind="ok")
 
 
 @app.get("/build/readouts", response_class=HTMLResponse)
 def build_readouts(
     request: Request,
+    sid: str = "",
     http: HttpClient = Depends(get_http),
     store: SessionStore = Depends(get_store),
 ):
     """Compute + render the win-condition/bracket panel for the current deck.
 
     Fetched lazily by the builder's readouts placeholder (on page load and after
-    every edit), so the ~2s Spellbook round-trip never blocks a click. The result
-    is cached on the session for a plain ``GET /build`` reload.
+    every edit), so the ~2s Spellbook round-trip never blocks a click. If Spellbook
+    is unreachable, render a retry state rather than 500 the whole panel.
     """
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store, sid)
     if session is None:
-        return RedirectResponse("/", status_code=303)
-    readouts = compute_readouts(http, session.deck)
-    session.readouts = readouts
+        return _session_lost(request)
+    try:
+        readouts = compute_readouts(http, session.deck)
+    except SpellbookUnavailable:
+        return templates.TemplateResponse(request, "_readouts_unavailable.html", {})
     return templates.TemplateResponse(
         request, "_readouts_panel.html", {"readouts": readouts}
     )
@@ -573,9 +696,9 @@ def reset(request: Request, store: SessionStore = Depends(get_store)):
 def export_dck(request: Request, store: SessionStore = Depends(get_store)):
     from manaless.dck_export import dck_filename, to_dck
 
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
     filename = dck_filename(session.deck)
     return Response(
         content=to_dck(session.deck),
@@ -591,9 +714,9 @@ def buy_missing(
     owned: Collection = Depends(get_owned),
 ):
     """Review page: the cards in the current deck you don't own, + a TCGplayer link."""
-    session = store.get(request.cookies.get(COOKIE_NAME))
+    _sid, session = _resolve_session(request, store)
     if session is None:
-        return RedirectResponse("/", status_code=303)
+        return _session_lost(request)
     missing = deck_diff(session.deck, owned)
     basics_skipped = sum(
         1
@@ -617,15 +740,18 @@ def buy_missing(
 def collection_page(
     request: Request,
     owned: Collection = Depends(get_owned),
-    message: str | None = None,
-    error: str | None = None,
 ):
-    return templates.TemplateResponse(
-        request, "collection.html", {"owned": owned, "message": message, "error": error}
-    )
+    # No message/error query params: the only writer (collection_import) renders the
+    # template directly with its own context, and reflecting arbitrary query text as
+    # an app banner is a needless spoofing surface (W16).
+    return templates.TemplateResponse(request, "collection.html", {"owned": owned})
 
 
-@app.post("/collection/import", response_class=HTMLResponse)
+@app.post(
+    "/collection/import",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_same_origin)],
+)
 def collection_import(
     request: Request,
     file: UploadFile = File(...),

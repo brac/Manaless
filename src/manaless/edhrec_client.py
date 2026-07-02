@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import httpx
 
 from manaless.http.client import HttpClient
+from manaless.names import norm_name
 
 EDHREC_HOME = "https://edhrec.com/"
 DECK_TABLE_URL = "https://json.edhrec.com/pages/decks/{slug}.json"
@@ -96,8 +97,9 @@ class CardPopularity:
 
 
 def _popularity_key(name: str) -> str:
-    """Front-face, case-folded — so a card matches regardless of DFC spelling/case."""
-    return name.split("//", 1)[0].strip().casefold()
+    """The shared canonical key (see `names.norm_name`) — matches a card
+    regardless of DFC spelling, apostrophe glyph, or case."""
+    return norm_name(name)
 
 
 @dataclass(frozen=True, slots=True)

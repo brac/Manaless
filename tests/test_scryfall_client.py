@@ -120,6 +120,21 @@ def test_get_collection_matches_dfc_by_front_face(tmp_path):
     assert "FRONT" in card.oracle_text
 
 
+def test_get_collection_matches_when_scryfall_returns_curly_apostrophe(tmp_path):
+    # Request "Urza's Bauble" (straight quote); Scryfall echoes the card back
+    # spelled with a curly apostrophe. The canonical key reconciles them, so the
+    # card lands in by_name under the REQUESTED name — never lost between the two.
+    returned = {**NORMAL, "name": "Urza’s Bauble"}  # curly U+2019
+
+    def handler(request):
+        return httpx.Response(200, json={"data": [returned], "not_found": []})
+
+    http = _http(tmp_path, handler)
+    by_name, not_found = get_collection(http, ["Urza's Bauble"])  # straight quote
+    assert "Urza's Bauble" in by_name
+    assert not_found == []
+
+
 def test_get_collection_reports_not_found(tmp_path):
     handler = _collection_handler({"Sol Ring": NORMAL}, not_found_names={"Nope"})
     http = _http(tmp_path, handler)

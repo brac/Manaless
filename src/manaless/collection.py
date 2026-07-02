@@ -19,6 +19,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from manaless.names import norm_name
+
 # Header aliases, matched case-insensitively after stripping. Order within a set
 # does not matter; we pick the first column in the file that matches.
 _NAME_HEADERS = {
@@ -36,13 +38,13 @@ def _norm(header: str) -> str:
 
 
 def _key(name: str) -> str:
-    """Lookup key for a card name: front face, case-folded.
+    """Lookup key for a card name — the shared canonical key (see `names.norm_name`).
 
     Double-faced / split cards are one physical card; collection apps and
     decklists disagree on whether they store ``"Front // Back"`` or just
     ``"Front"``. Keying on the front face makes owned-matching agree either way.
     """
-    return name.split("//", 1)[0].strip().casefold()
+    return norm_name(name)
 
 
 def _parse_qty(raw: str) -> int:

@@ -111,6 +111,22 @@ def test_combo_completeness_reports_closest_line():
     assert wc.combo_completeness == "1 of 2 pieces"
 
 
+def test_add_one_matches_dfc_present_piece_against_front_face():
+    # Spellbook names the in-deck piece with its full DFC spelling; the deck holds
+    # the front face. The combo is genuinely one card away and must not be dropped.
+    deck = _deck([Card("Fable of the Mirror-Breaker", 1)])
+    combos = ComboResults(
+        identity="C",
+        included=(),
+        almost_included=(
+            _combo(["Fable of the Mirror-Breaker // Reflection of Kiki-Jiki", "Twinflame"]),
+        ),
+    )
+    wc = evaluate_win_conditions(deck, combos)
+    assert [a.add for a in wc.add_one] == ["Twinflame"]  # the only missing piece
+    assert wc.combo_completeness == "1 of 2 pieces"       # present piece counted
+
+
 def test_to_dict_shape_matches_spec():
     deck = _deck([Card("Sol Ring", 1), Card("Basalt Monolith", 1)])
     combos = ComboResults("C", (_combo(["Sol Ring", "Basalt Monolith"]),), ())

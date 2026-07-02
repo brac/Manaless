@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from manaless.names import norm_name
+
 # Primary-type precedence for categorising a card (first match wins). A card with
 # multiple types (e.g. "Artifact Creature", "Land Creature") lands in the more
 # salient bucket — matching how deckbuilding sites group cards.
@@ -91,22 +93,24 @@ class DeckModel:
     # All mutators are pure: they return a NEW DeckModel (frozen). Substituting
     # invalidates the source provenance, so `edhrec_bracket`/`deck_id` are
     # cleared — bracket/win-conditions must re-infer from the new list. Cards are
-    # matched by case-folded name. Commanders are never touched by these.
+    # matched by the shared canonical key (`names.norm_name`: front face,
+    # apostrophe-normalised, case-folded) so a DFC full name and its front face
+    # are one card. Commanders are never touched by these.
 
     def remove(self, name: str) -> "DeckModel":
-        """Drop the mainboard card matching ``name`` (case-insensitive)."""
-        folded = name.casefold()
-        kept = tuple(c for c in self.cards if c.name.casefold() != folded)
+        """Drop the mainboard card matching ``name`` (canonical-key match)."""
+        key = norm_name(name)
+        kept = tuple(c for c in self.cards if norm_name(c.name) != key)
         if len(kept) == len(self.cards):
             raise KeyError(f"{name!r} is not in the mainboard")
         return self._substituted(kept)
 
     def add(self, card: Card) -> "DeckModel":
         """Add ``card`` to the mainboard, merging quantities if it's already in."""
-        folded = card.name.casefold()
+        key = norm_name(card.name)
         merged, found = [], False
         for existing in self.cards:
-            if existing.name.casefold() == folded:
+            if norm_name(existing.name) == key:
                 merged.append(replace(card, quantity=existing.quantity + card.quantity))
                 found = True
             else:

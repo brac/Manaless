@@ -104,6 +104,29 @@ def test_add_merges_quantity_for_existing_name():
     assert len(sol) == 1 and sol[0].quantity == 2
 
 
+def test_add_dfc_full_name_merges_into_front_face_entry():
+    # Deck holds the EDHREC front-face name; Scryfall autocomplete hands back the
+    # full "Front // Back". They are one physical card — quantities must merge.
+    deck = DeckModel(
+        commanders=(_c("Atraxa, Praetors' Voice", "Legendary Creature"),),
+        cards=(_c("Fable of the Mirror-Breaker", "Enchantment"),),
+    ).add(Card(name="Fable of the Mirror-Breaker // Reflection of Kiki-Jiki", quantity=1))
+    fable = [c for c in deck.cards if "Fable" in c.name]
+    assert len(fable) == 1 and fable[0].quantity == 2  # merged, no duplicate entry
+
+
+def test_remove_matches_dfc_full_name_against_front_face_entry():
+    deck = DeckModel(
+        commanders=(_c("Atraxa, Praetors' Voice", "Legendary Creature"),),
+        cards=(_c("Fable of the Mirror-Breaker", "Enchantment"), _c("Sol Ring", "Artifact")),
+    )
+    # remove by either spelling works
+    by_full = deck.remove("Fable of the Mirror-Breaker // Reflection of Kiki-Jiki")
+    assert [c.name for c in by_full.cards] == ["Sol Ring"]
+    by_front = deck.remove("Fable of the Mirror-Breaker")
+    assert [c.name for c in by_front.cards] == ["Sol Ring"]
+
+
 def test_substitution_returns_new_model_leaving_original_unchanged():
     original = _src_deck()
     original.substitute("Sol Ring", _c("Arcane Signet", "Artifact"))

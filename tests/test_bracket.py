@@ -108,6 +108,16 @@ def test_custom_signals_detected():
     assert out.tutors == ("Demonic Tutor",)  # land tutor excluded (off-rubric anyway)
 
 
+def test_front_face_game_changer_counts_in_heuristic_path():
+    # Tergrid is a Game Changer; the data list carries the front face and the deck
+    # holds the front face. With no Spellbook estimate, one GC lifts a plain deck
+    # from bracket 2 to 3.
+    out = evaluate_bracket(_deck([Card("Tergrid, God of Fright", 1)]), None)
+    assert out.source == "heuristic"
+    assert out.game_changers == ("Tergrid, God of Fright",)
+    assert out.bracket == 3
+
+
 def test_heuristic_path_without_estimate_or_label():
     # No Spellbook estimate, no EDHREC label -> rough local guess from density.
     out = evaluate_bracket(_deck([Card("Sol Ring", 1), Card("Mana Crypt", 1)]), None)

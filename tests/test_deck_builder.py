@@ -2,7 +2,12 @@
 
 import pytest
 
-from manaless.deck_builder import NoDecksAvailable, build_deck, substitute_card
+from manaless.deck_builder import (
+    CommanderNotFound,
+    NoDecksAvailable,
+    build_deck,
+    substitute_card,
+)
 from manaless.scryfall_client import ScryfallCard
 
 
@@ -83,6 +88,29 @@ def test_unresolved_card_kept_not_dropped():
     assert "Sol Ring" in [c.name for c in deck.cards]
     assert deck.unresolved == ("Sol Ring",)
     assert deck.total_cards == 5
+
+
+def test_commander_detected_across_apostrophe_glyphs():
+    # EDHREC serves a curly apostrophe; the user/input carries a straight one.
+    deck_line = ["1 Gaea’s Blessing", "1 Sol Ring"]
+    edhrec = FakeEdhrec(TABLE, deck_line)
+    deck = build_deck(edhrec, _enricher(), "Gaea's Blessing")  # straight quote in
+    assert [c.name for c in deck.commanders] == ["Gaea’s Blessing"]
+    assert [c.name for c in deck.cards] == ["Sol Ring"]
+
+
+def test_partner_pair_puts_both_in_commanders():
+    deck_line = ["1 Thrasios, Triton Hero", "1 Tymna the Weaver", "1 Sol Ring"]
+    edhrec = FakeEdhrec(TABLE, deck_line)
+    deck = build_deck(edhrec, _enricher(), "Thrasios, Triton Hero + Tymna the Weaver")
+    assert {c.name for c in deck.commanders} == {"Thrasios, Triton Hero", "Tymna the Weaver"}
+    assert [c.name for c in deck.cards] == ["Sol Ring"]
+
+
+def test_no_commander_match_raises():
+    edhrec = FakeEdhrec(TABLE, ["1 Sol Ring", "1 Forest"])
+    with pytest.raises(CommanderNotFound):
+        build_deck(edhrec, _enricher(), "Someone Not In The List")
 
 
 def test_substitute_card_enriches_new_card():

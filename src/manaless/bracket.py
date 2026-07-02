@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from manaless.deck_model import DeckModel
+from manaless.names import norm_name
 from manaless.paths import DATA_DIR
 from manaless.spellbook_client import BracketEstimate
 
@@ -117,7 +118,7 @@ def _game_changer_set() -> frozenset[str]:
         data = json.loads((DATA_DIR / "game-changers.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return frozenset()
-    return frozenset(n.casefold() for n in data.get("cards", []))
+    return frozenset(norm_name(n) for n in data.get("cards", []))
 
 
 def evaluate_bracket(
@@ -230,7 +231,7 @@ def _custom_signals(
         gc = tuple(c.name for c in estimate.cards if c.game_changer)
     else:
         gc_set = _game_changer_set()
-        gc = tuple(c.name for c in deck.all_cards() if c.name.casefold() in gc_set)
+        gc = tuple(c.name for c in deck.all_cards() if norm_name(c.name) in gc_set)
 
     fast_mana, free_int, tutors = [], [], []
     for card in deck.all_cards():

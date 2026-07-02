@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 from manaless.deck_model import Card, DeckModel
 from manaless.edhrec_client import EdhrecClient, filter_deck_hashes
+from manaless.names import norm_name
 from manaless.scryfall_client import ScryfallCard, get_collection
 
 # Enrich a batch of card names at once. Returns metadata only for names that
@@ -27,6 +28,16 @@ _LINE = re.compile(r"^(\d+)\s+(.*)$")
 
 class NoDecksAvailable(RuntimeError):
     """EDHREC has no indexed decks for this commander (§5 fallback not yet built)."""
+
+
+class CommanderNotFound(RuntimeError):
+    """No decklist entry matched the requested commander.
+
+    Raised rather than returning a silently commander-less deck: an empty
+    ``commanders`` tuple would drop the ``SB:`` line from the `.dck` export and
+    send an empty commander list (wrong colour identity) to Spellbook. The web
+    layer turns this into a readable message.
+    """
 
 
 def build_deck(
@@ -50,13 +61,22 @@ def build_deck(
     names = list(dict.fromkeys(name for _, name in entries))
     metadata = enrich(names)
 
-    commander_key = commander.casefold()
+    # EDHREC displays partner/background pairs as "A + B"; accept either segment
+    # as the commander. Match on the shared canonical key so curly-vs-straight
+    # apostrophes and DFC spellings agree with the decklist.
+    commander_keys = {norm_name(part) for part in commander.split("+")}
     commanders: list[Card] = []
     mainboard: list[Card] = []
     for quantity, name in entries:
         card = _to_card(quantity, name, metadata.get(name))
-        target = commanders if name.casefold() == commander_key else mainboard
+        target = commanders if norm_name(name) in commander_keys else mainboard
         target.append(card)
+
+    if not commanders:
+        raise CommanderNotFound(
+            f"No decklist entry matched commander {commander!r} "
+            f"(deck {deck_id!r}). EDHREC may spell it differently."
+        )
 
     return DeckModel(
         commanders=tuple(commanders),

@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from manaless.deck_model import DeckModel
+from manaless.names import norm_name
 from manaless.spellbook_client import Combo, ComboResults
 
 # --- non-combo heuristic signal sets (lowercased oracle-text substrings) -------
@@ -105,7 +106,10 @@ class WinConditions:
 
 def evaluate_win_conditions(deck: DeckModel, combos: ComboResults) -> WinConditions:
     """Merge the three sources into one readout. Pure; no network."""
-    deck_names = {name.casefold() for name in deck.card_names()}
+    # Canonical keys so Spellbook's Scryfall-style DFC names ("A // B") match the
+    # deck's EDHREC front-face names — otherwise a genuine "one card away" line is
+    # silently dropped and completeness undercounts.
+    deck_names = {norm_name(name) for name in deck.card_names()}
 
     add_one = _add_one_lines(combos, deck_names)
     alt_wins = _scan_alt_wins(deck)
@@ -131,7 +135,7 @@ def _add_one_lines(combos: ComboResults, deck_names: set[str]) -> tuple[AddOneLi
     """
     grouped: dict[str, dict] = {}
     for combo in combos.almost_included:
-        missing = [c for c in combo.cards if c.casefold() not in deck_names]
+        missing = [c for c in combo.cards if norm_name(c) not in deck_names]
         if len(missing) != 1:
             continue
         entry = grouped.setdefault(
@@ -143,7 +147,7 @@ def _add_one_lines(combos: ComboResults, deck_names: set[str]) -> tuple[AddOneLi
                 entry["produces"].append(effect)
         if combo.popularity > entry["popularity"]:  # keep the most-played line's pieces
             entry["popularity"] = combo.popularity
-            entry["example_with"] = tuple(c for c in combo.cards if c.casefold() in deck_names)
+            entry["example_with"] = tuple(c for c in combo.cards if norm_name(c) in deck_names)
 
     lines = [
         AddOneLine(
@@ -209,7 +213,7 @@ def _combo_completeness(combos: ComboResults, deck_names: set[str]) -> str | Non
         total = len(combo.cards)
         if not total:
             continue
-        present = sum(1 for c in combo.cards if c.casefold() in deck_names)
+        present = sum(1 for c in combo.cards if norm_name(c) in deck_names)
         if best is None or (total - present) < (best[1] - best[0]):
             best = (present, total)
     return f"{best[0]} of {best[1]} pieces" if best else None

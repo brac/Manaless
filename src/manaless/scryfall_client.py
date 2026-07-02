@@ -16,6 +16,7 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from manaless.http.client import HttpClient
+from manaless.names import norm_name
 
 CACHE_NAMESPACE = "scryfall-card"
 NAMED_URL = "https://api.scryfall.com/cards/named?exact={query}"
@@ -25,7 +26,6 @@ SEARCH_URL = "https://api.scryfall.com/cards/search"
 
 # Scryfall's batch endpoint caps each request at 75 identifiers.
 _COLLECTION_BATCH = 75
-_DFC_NAME_SEP = " // "
 
 # Scryfall asks clients to send an explicit Accept header (and a User-Agent,
 # which HttpClient already sets).
@@ -116,11 +116,13 @@ def _fetch_collection_batch(
     body = {"identifiers": [{"name": name} for name in batch]}
     data = http.post_json(COLLECTION_URL, body, headers=_ACCEPT)
 
-    wanted = {name.casefold(): name for name in batch}
+    # Key by the shared canonical name so a card Scryfall returns under different
+    # punctuation (curly apostrophe) or as a full DFC name still matches the
+    # requested name — otherwise it lands in neither by_name nor not_found.
+    wanted = {norm_name(name): name for name in batch}
     for raw in data.get("data", []):
         full = raw.get("name", "")
-        front = full.split(_DFC_NAME_SEP, 1)[0]
-        requested = wanted.get(full.casefold()) or wanted.get(front.casefold())
+        requested = wanted.get(norm_name(full))
         if requested is None:
             continue  # unexpected extra card; ignore rather than mis-key it
         http.cache.set(CACHE_NAMESPACE, requested, raw)

@@ -98,6 +98,9 @@ def owned():
 
 @pytest.fixture
 def client(monkeypatch, tmp_path, owned):
+    # NOTE: this mutates the module-global ``app.dependency_overrides`` and clears
+    # it on teardown, so it is correct only under a serial run. It would race under
+    # pytest-xdist; move to an app-factory pattern before adopting parallel runs.
     monkeypatch.setattr(readout_mod, "find_my_combos", lambda http, deck: ComboResults("WUBRG", (), ()))
     monkeypatch.setattr(
         readout_mod, "estimate_bracket", lambda http, deck: BracketEstimate(tag="C", cards=(), combos=())

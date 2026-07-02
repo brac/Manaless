@@ -25,9 +25,19 @@ if [ -z "$PY" ]; then
   python3 -m venv .venv 2>/dev/null || python -m venv .venv
   PY="$(pick_py)"
 fi
+if [ -z "$PY" ]; then
+  echo "venv created but no python found under .venv — check the venv layout." >&2
+  exit 1
+fi
 
 # 2. Dependencies ------------------------------------------------------------
-if ! "$PY" -c "import manaless, uvicorn, fastapi, jinja2, multipart" 2>/dev/null; then
+# The multipart package is importable as either `python_multipart` (current) or
+# the deprecated `multipart` alias; probe the new name first so a warm launch
+# doesn't trigger a full reinstall once the alias is removed upstream.
+have_multipart() {
+  "$PY" -c "import python_multipart" 2>/dev/null || "$PY" -c "import multipart" 2>/dev/null
+}
+if ! "$PY" -c "import manaless, uvicorn, fastapi, jinja2" 2>/dev/null || ! have_multipart; then
   echo "Installing dependencies (editable + [web] extra)..."
   "$PY" -m pip install --upgrade pip >/dev/null
   "$PY" -m pip install -e ".[web]"

@@ -25,13 +25,27 @@ $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) {
   Write-Host "Creating virtual environment (.venv)..." -ForegroundColor Cyan
   python -m venv .venv
+  # $ErrorActionPreference="Stop" does NOT stop a native-command failure, so check
+  # the exit code explicitly rather than falling through to a broken launch.
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to create .venv (python -m venv exited $LASTEXITCODE). Is Python 3.12+ on PATH?"
+    exit 1
+  }
 }
 
 # 2. Dependencies -------------------------------------------------------------
 # Import the runtime deps as a cheap "is it set up?" probe; install only on miss,
-# so warm runs launch instantly.
-& $py -c "import manaless, uvicorn, fastapi, jinja2, multipart" 2>$null
-if ($LASTEXITCODE -ne 0) {
+# so warm runs launch instantly. The multipart package imports as either
+# `python_multipart` (current) or the deprecated `multipart` alias — probe the
+# new name first so a warm launch doesn't reinstall once the alias is removed.
+& $py -c "import manaless, uvicorn, fastapi, jinja2" 2>$null
+$depsOk = $LASTEXITCODE -eq 0
+if ($depsOk) {
+  & $py -c "import python_multipart" 2>$null
+  if ($LASTEXITCODE -ne 0) { & $py -c "import multipart" 2>$null }
+  $depsOk = $LASTEXITCODE -eq 0
+}
+if (-not $depsOk) {
   Write-Host "Installing dependencies (editable + [web] extra)..." -ForegroundColor Cyan
   & $py -m pip install --upgrade pip | Out-Null
   & $py -m pip install -e ".[web]"
@@ -41,19 +55,27 @@ if ($LASTEXITCODE -ne 0) {
 $url = "http://${BindHost}:${Port}"
 Write-Host "Manaless -> $url" -ForegroundColor Green
 
-if (-not $NoBrowser) {
-  # Poll in the background and open the tab once the server actually answers,
-  # so the browser doesn't beat uvicorn to the port and show a dead page.
-  Start-Job -ScriptBlock {
-    param($u)
-    for ($i = 0; $i -lt 50; $i++) {
-      try { Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1 | Out-Null; break }
-      catch { Start-Sleep -Milliseconds 300 }
-    }
-    Start-Process $u
-  } -ArgumentList $url | Out-Null
-}
+$browserJob = $null
+try {
+  if (-not $NoBrowser) {
+    # Poll in the background and open the tab only once the server actually
+    # answers, so the browser doesn't beat uvicorn to the port and show a dead
+    # page (and don't Start-Process at all if it never comes up).
+    $browserJob = Start-Job -ScriptBlock {
+      param($u)
+      $ok = $false
+      for ($i = 0; $i -lt 50; $i++) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1 | Out-Null; $ok = $true; break }
+        catch { Start-Sleep -Milliseconds 300 }
+      }
+      if ($ok) { Start-Process $u }
+    } -ArgumentList $url
+  }
 
-$uargs = @("-m", "manaless.web", "--host", $BindHost, "--port", $Port)
-if ($Reload) { $uargs += "--reload" }
-& $py @uargs
+  $uargs = @("-m", "manaless.web", "--host", $BindHost, "--port", $Port)
+  if ($Reload) { $uargs += "--reload" }
+  & $py @uargs
+}
+finally {
+  if ($browserJob) { Remove-Job -Job $browserJob -Force -ErrorAction SilentlyContinue }
+}

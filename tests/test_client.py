@@ -13,7 +13,28 @@ from manaless.http.client import HttpClient, _retry_after_seconds
 def _client(tmp_path, handler) -> HttpClient:
     transport = httpx.MockTransport(handler)
     inner = httpx.Client(transport=transport)
+    # Zero the limiters so the suite never sleeps for real (matches the other
+    # client-test modules) — the determinism this file documents depends on it.
+    return HttpClient(
+        DiskCache(tmp_path), client=inner, host_delays={}, default_delay=0.0
+    )
+
+
+def _real_limiter_client(tmp_path) -> HttpClient:
+    # Real HOST_DELAYS so limiter *selection* (grouping) can be tested; no requests
+    # are issued in those tests, so nothing actually sleeps.
+    inner = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
     return HttpClient(DiskCache(tmp_path), client=inner)
+
+
+class _SpyLimiter:
+    """Records how many times wait() fires — the politeness guarantee (§2/§4)."""
+
+    def __init__(self):
+        self.waits = 0
+
+    def wait(self):
+        self.waits += 1
 
 
 def test_get_json_fetches_then_caches(tmp_path):
@@ -98,7 +119,7 @@ def test_post_json_sends_body_and_parses_response(tmp_path):
 
 
 def test_known_hosts_get_their_configured_limiter(tmp_path):
-    client = _client(tmp_path, lambda r: httpx.Response(200, json={}))
+    client = _real_limiter_client(tmp_path)
 
     edhrec = client._limiter_for("https://json.edhrec.com/pages/decks/x.json")
     scryfall = client._limiter_for("https://api.scryfall.com/cards/named")
@@ -111,7 +132,7 @@ def test_known_hosts_get_their_configured_limiter(tmp_path):
 def test_both_edhrec_hosts_share_one_limiter(tmp_path):
     # json.edhrec.com and edhrec.com are one service: interleaved traffic must
     # share a single limiter so the combined cadence honours the 0.80s promise.
-    client = _client(tmp_path, lambda r: httpx.Response(200, json={}))
+    client = _real_limiter_client(tmp_path)
     a = client._limiter_for("https://json.edhrec.com/pages/decks/x.json")
     b = client._limiter_for("https://edhrec.com/_next/data/B/deckpreview/x.json")
     assert a is b
@@ -144,3 +165,36 @@ def test_retry_after_http_date_form_is_parsed_and_clamped():
 def test_retry_after_missing_or_garbage_uses_fallback():
     assert _retry_after_seconds(httpx.Response(429)) == 1.0
     assert _retry_after_seconds(httpx.Response(429, headers={"Retry-After": "soon"})) == 1.0
+
+
+def test_limiter_waits_once_per_request(tmp_path):
+    spy = _SpyLimiter()
+    client = _client(tmp_path, lambda r: httpx.Response(200, json={"ok": True}))
+    client._default_limiter = spy  # unknown host -> the default limiter
+    client.get_json("https://example.com/x")
+    assert spy.waits == 1
+
+
+def test_limiter_not_waited_on_cache_hit(tmp_path):
+    spy = _SpyLimiter()
+    client = _client(tmp_path, lambda r: httpx.Response(200, json={"ok": True}))
+    client._default_limiter = spy
+    client.get_json("https://example.com/x", cache_namespace="ns", cache_key="k")
+    client.get_json("https://example.com/x", cache_namespace="ns", cache_key="k")  # cache hit
+    assert spy.waits == 1  # the second call short-circuits before the limiter
+
+
+def test_limiter_waits_on_every_429_retry(tmp_path):
+    spy = _SpyLimiter()
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(tmp_path, handler)
+    client._default_limiter = spy
+    client.get_json("https://example.com/x")
+    assert calls["n"] == 3 and spy.waits == 3  # 2 retries -> 3 requests -> 3 waits

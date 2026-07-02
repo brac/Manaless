@@ -14,6 +14,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    # The web tests import fastapi.testclient, so the dev extra must pull the web
+    # stack in — otherwise `pip install -e ".[dev]" && pytest` fails at collection.
+    "manaless[web]",
 ]
 # Build-step-4 substitution builder. Kept out of the core deps so the pipeline
 # stays importable headless (CLAUDE.md §2). HTMX is vendored in web/static/.

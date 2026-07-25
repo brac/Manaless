@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 
 from manaless.deck_model import DeckModel
-from manaless.edhrec_client import PopularityIndex
+from manaless.edhrec_client import CommanderAverage, PopularityIndex
 from manaless.scryfall_client import ScryfallCard
 
 COOKIE_NAME = "manaless_sid"
@@ -34,6 +34,10 @@ class BuildSession:
     # Aggregate EDHREC card popularity for this commander; fetched once at build
     # time (it doesn't change as the user substitutes within the same commander).
     popularity: PopularityIndex = field(default_factory=lambda: PopularityIndex({}))
+    # EDHREC's average mainboard composition for this commander (type counts +
+    # nonland curve), the baseline the composition panel diffs against. Fetched
+    # alongside popularity off the same cached page; None when EDHREC has no page.
+    average: CommanderAverage | None = None
     # Scryfall metadata (type line + image) for the substitution-palette candidates,
     # enriched once at build time so the palette can show a card-type tag and a
     # hover preview without any per-edit network call. Keyed by card name.

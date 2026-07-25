@@ -1,0 +1,51 @@
+{# Composition vs the average EDHREC deck for this commander (Tier A readout).
+   Pure + instant — recomputed inline on every edit, unlike the Spellbook-backed
+   readouts, which stay lazy. Card TYPES only: these numbers are not comparable to
+   the functional Ramp/Removal categories the swap modal uses. #}
+<div class="panel composition">
+  <h2>Composition</h2>
+  {% if composition.has_average %}
+  <p class="muted">Your mainboard vs the average deck for this commander (EDHREC,
+    rounded averages — the commander itself isn't counted on either side).</p>
+
+  {% if composition.notable %}
+  <p class="comp-flag">Furthest from average:
+    {% for row in composition.notable -%}
+    <strong>{{ row.label }} {{ '%+d'|format(row.delta) }}</strong>{{ ', ' if not loop.last }}
+    {%- endfor %}</p>
+  {% else %}
+  <p class="comp-flag ok">Every category is within {{ notable_delta }} of average.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No EDHREC baseline for this commander — showing your breakdown only.</p>
+  {% endif %}
+
+  <table class="comp">
+    <thead><tr><th>Type</th><th>You</th>{% if composition.has_average %}<th>Avg</th><th>Δ</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for row in composition.types %}
+      <tr{% if row.notable %} class="off"{% endif %}>
+        <td>{{ row.label }}</td>
+        <td class="num">{{ row.actual }}</td>
+        {% if composition.has_average %}
+        <td class="num muted">{% if row.average is none %}—{% else %}{{ row.average }}{% endif %}</td>
+        <td class="num delta">{% if row.delta is none %}—{% elif row.delta == 0 %}·{% else %}{{ '%+d'|format(row.delta) }}{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if composition.curve %}
+  <h3>Mana curve <span class="muted">(nonland)</span></h3>
+  <table class="comp curve">
+    <thead><tr><th>MV</th>{% for row in composition.curve %}<th class="num">{{ row.label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><td>You</td>{% for row in composition.curve %}<td class="num{% if row.notable %} off{% endif %}">{{ row.actual }}</td>{% endfor %}</tr>
+      {% if composition.has_average %}
+      <tr class="muted"><td>Avg</td>{% for row in composition.curve %}<td class="num">{% if row.average is none %}—{% else %}{{ row.average }}{% endif %}</td>{% endfor %}</tr>
+      {% endif %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>

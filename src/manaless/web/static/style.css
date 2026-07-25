@@ -146,6 +146,23 @@ select:focus { outline: 2px solid var(--accent); }
 .addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: none; }
 .addlist li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }
 .addlist .add { flex: 1; text-align: left; }
+
+/* --- composition vs commander average --- */
+.composition h3 { margin: .9rem 0 .3rem; }
+.comp { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.comp th { color: var(--muted); font-weight: 600; text-align: left; padding: .15rem .3rem; }
+.comp td { padding: .15rem .3rem; border-top: 1px solid var(--border); }
+.comp .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* A row far from average is the whole point of the panel — make it findable at a
+   glance, without implying it's an error (the line is fuzzy by nature). */
+.comp tr.off td, .comp td.off { color: var(--accent); font-weight: 700; }
+.comp .delta { color: var(--muted); }
+.comp tr.off .delta { color: var(--accent); }
+/* The curve table is one column per mana value; let it scroll rather than
+   squeeze the sidebar or wrap mid-row. */
+.composition .curve { display: block; overflow-x: auto; white-space: nowrap; }
+.comp-flag { font-size: .8rem; margin: .4rem 0 .6rem; color: var(--accent); }
+.comp-flag.ok { color: var(--good); }
 /* Price column on palette / swap rows. Fixed min-width + tabular figures so the
    numbers line up down the list instead of ragging with each row's name length. */
 .listprice { color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 3.8em; text-align: right; }

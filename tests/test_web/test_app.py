@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 
 import manaless.web.readout as readout_mod
 from manaless.collection import Collection
-from manaless.edhrec_client import CardPopularity, PopularityIndex, TopCommander
+from manaless.edhrec_client import (
+    CardPopularity,
+    CommanderAverage,
+    PopularityIndex,
+    TopCommander,
+)
 from manaless.scryfall_client import ScryfallCard
 from manaless.spellbook_client import BracketEstimate, Combo, ComboResults
 from manaless.scryfall_client import CommanderSearch
@@ -45,6 +50,16 @@ class FakeEdhrec:
             # on both the palette and the swap suggestions.
             "unpriced relic": CardPopularity("Unpriced Relic", 40, 100, 0.0),
         })
+
+    def fetch_commander_average(self, commander):
+        # Shaped like the real Atraxa page. The fake mainboard is 2 artifacts, so
+        # Artifact lands at -7 against this baseline — a deliberate, checkable gap.
+        return CommanderAverage(
+            types={"Creature": 24, "Instant": 10, "Artifact": 9, "Land": 35},
+            curve={1: 8, 2: 18},
+            basics=12,
+            nonbasics=23,
+        )
 
     def fetch_top_commanders(self):
         # EDHREC deck-count ranking (most-played first) + padding past one page.
@@ -796,3 +811,38 @@ def test_swap_delta_tooltip_explains_both_sides(client):
     r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
     assert "$25.00 vs $1.50 — adds $23.50" in r.text
     assert "$0.75 vs $1.50 — saves $0.75" in r.text
+
+
+# --- composition panel (Tier A: deck vs EDHREC commander average) ---------
+
+
+def test_build_shows_composition_panel(client):
+    r = _build(client)
+    assert 'id="composition"' in r.text
+    assert "Composition" in r.text
+    assert "vs the average deck for this commander" in r.text
+
+
+def test_composition_shows_delta_against_the_average(client):
+    """Fake deck is 1 Sol Ring + 1 Counterspell (Artifact); average says 9 artifacts."""
+    r = _build(client)
+    comp = r.text[r.text.index('id="composition"'):]
+    assert "Artifact" in comp
+    assert "-7" in comp or "\u22127" in comp  # 2 artifacts vs an average of 9
+
+
+def test_composition_recomputes_on_edit(client):
+    """The panel is OOB-swapped with the card list, so it can't go stale."""
+    _build(client)
+    r = client.post("/build/remove", data={"name": "Sol Ring"})
+    assert 'id="composition" hx-swap-oob="true"' in r.text
+
+
+def test_composition_degrades_without_an_edhrec_baseline(client, monkeypatch):
+    """A commander EDHREC has no page for still gets a plain breakdown, not a blank."""
+    monkeypatch.setattr(FakeEdhrec, "fetch_commander_average", lambda self, c: None)
+    r = _build(client)
+    comp = r.text[r.text.index('id="composition"'):]
+    assert "No EDHREC baseline" in comp
+    assert "Artifact" in comp  # the deck's own counts still render
+    assert "Avg" not in comp   # ...without empty average/delta columns

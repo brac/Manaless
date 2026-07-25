@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from manaless.buy import deck_diff, is_basic_land, mass_entry_url, single_card_url
 from manaless.card_category import category_of
 from manaless.collection import Collection
+from manaless.composition import NOTABLE_DELTA, compare
 from manaless.deck_builder import (
     CommanderNotFound,
     NoDecksAvailable,
@@ -222,6 +223,10 @@ def _builder_ctx(
         # the buy page shows, so header and buy count agree.
         "missing_count": missing,
         "popularity": session.popularity,
+        # Pure + instant (no network), so unlike the Spellbook readouts this is
+        # computed inline on every edit rather than lazy-loaded.
+        "composition": compare(session.deck, session.average),
+        "notable_delta": NOTABLE_DELTA,
         "palette": [
             _palette_view(cp, session.palette_meta.get(cp.name))
             for cp in session.popularity.excluding(session.deck.card_names())[:PALETTE_LIMIT]
@@ -494,11 +499,16 @@ def build(
     # so the builder paints as soon as the deck is enriched rather than after the
     # ~2s Spellbook round-trip.
     popularity = edhrec.fetch_commander_card_stats(commander)
+    # Same disk-cached commander page as the popularity call above, so this is a
+    # cache hit rather than a second round trip.
+    average = edhrec.fetch_commander_average(commander)
     # Enrich the palette candidates once (one batched, cached Scryfall call) so the
     # suggestions can show a type tag + hover image with no per-edit network cost.
     palette_pool = [cp.name for cp in popularity.excluding(deck.card_names())[:PALETTE_META_LIMIT]]
     palette_meta = enrich(palette_pool) if palette_pool else {}
-    session = BuildSession(deck=deck, popularity=popularity, palette_meta=dict(palette_meta))
+    session = BuildSession(
+        deck=deck, popularity=popularity, average=average, palette_meta=dict(palette_meta)
+    )
     sid = store.new_id()
     store.set(sid, session)
     # Pass the sid into the page (W2): every htmx mutation echoes it back, so a

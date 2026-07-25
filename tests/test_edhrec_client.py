@@ -320,3 +320,71 @@ def test_filter_deck_hashes_handles_null_savedate():
         {"urlhash": "nulldate", "savedate": None},
     ]
     assert filter_deck_hashes(table) == ["dated", "nulldate"]
+
+
+# --- average composition (commander page scalars + curve) -----------------
+# Same page as fetch_commander_card_stats, so a commander costs one fetch.
+
+
+def _page(**over):
+    """A commander page carrying the composition scalars, shaped like the real one."""
+    data = {
+        "creature": 24, "instant": 10, "sorcery": 8, "artifact": 9,
+        "enchantment": 7, "battle": 0, "planeswalker": 6, "land": 35,
+        "basic": 12, "nonbasic": 23,
+        "panels": {"mana_curve": {"0": 1, "1": 8, "2": 18, "7": 1}},
+        "container": {"json_dict": {"cardlists": []}},
+    }
+    data.update(over)
+    return data
+
+
+def test_fetch_commander_average_parses_types_and_curve(tmp_path):
+    c = _client(tmp_path, lambda r: httpx.Response(200, json=_page()))
+    avg = c.fetch_commander_average("Atraxa, Praetors' Voice")
+    assert avg.types == {
+        "Creature": 24, "Planeswalker": 6, "Battle": 0, "Instant": 10,
+        "Sorcery": 8, "Artifact": 9, "Enchantment": 7, "Land": 35,
+    }
+    assert avg.curve == {0: 1, 1: 8, 2: 18, 7: 1}  # keys coerced to int
+    assert (avg.basics, avg.nonbasics) == (12, 23)
+
+
+def test_average_and_popularity_share_one_fetch(tmp_path):
+    """The second reader must hit the disk cache, not the network."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json=_page())
+
+    c = _client(tmp_path, handler)
+    c.fetch_commander_card_stats("Atraxa, Praetors' Voice")
+    c.fetch_commander_average("Atraxa, Praetors' Voice")
+    assert calls["n"] == 1
+
+
+def test_fetch_commander_average_returns_none_when_no_page(tmp_path):
+    c = _client(tmp_path, lambda r: httpx.Response(404, json={}))
+    assert c.fetch_commander_average("Nobody") is None
+
+
+def test_fetch_commander_average_returns_none_without_scalars(tmp_path):
+    """A page shaped unexpectedly reads as "no baseline", not a bogus all-zero one."""
+    page = {"container": {"json_dict": {"cardlists": []}}}
+    c = _client(tmp_path, lambda r: httpx.Response(200, json=page))
+    assert c.fetch_commander_average("Weird") is None
+
+
+def test_fetch_commander_average_survives_a_junk_curve(tmp_path):
+    c = _client(tmp_path, lambda r: httpx.Response(
+        200, json=_page(panels={"mana_curve": {"2": 18, "x": 3, "4": "n/a"}})))
+    avg = c.fetch_commander_average("Atraxa, Praetors' Voice")
+    assert avg.curve == {2: 18}  # unparseable buckets skipped, types still returned
+    assert avg.types["Land"] == 35
+
+
+def test_fetch_commander_average_403_still_raises_blocked(tmp_path):
+    c = _client(tmp_path, lambda r: httpx.Response(403, json={}))
+    with pytest.raises(EdhrecBlocked):
+        c.fetch_commander_average("Atraxa, Praetors' Voice")

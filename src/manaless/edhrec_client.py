@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from manaless.deck_model import CATEGORY_ORDER
 from manaless.http.client import HttpClient
 from manaless.names import norm_name
 
@@ -112,6 +113,35 @@ class CardPopularity:
     @property
     def percent(self) -> float:
         return 100.0 * self.num_decks / self.potential_decks if self.potential_decks else 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class CommanderAverage:
+    """EDHREC's average *mainboard* composition for a commander.
+
+    Two independent baselines off the commander page:
+
+    - ``types``: rounded average count per primary card type, keyed by the
+      ``deck_model.CATEGORY_ORDER`` label. **Excludes the commander** — verified
+      empirically against EDHREC's own average decklist for both a creature-heavy
+      and a superfriends commander: every category matched exactly except Creature,
+      which was short by exactly the (creature) commander. So this compares against
+      a deck's mainboard, which is what ``DeckModel.categorized()`` returns.
+    - ``curve``: rounded average count of **nonland** cards per mana value. Keys
+      are *exact* mana values, not clamped — big-mana commanders really do report
+      buckets past 7 (Kozilek goes to 13), so folding a "7+" tail is a display
+      choice the caller makes, not something to bake in here.
+
+    The curve is a population average, not the curve of EDHREC's synthesised
+    average deck — the two do not agree card-for-card (same total, different
+    shape), which is expected and fine: a population average is the better
+    baseline. Don't "fix" it by deriving the curve from the average decklist.
+    """
+
+    types: dict[str, int]
+    curve: dict[int, int]
+    basics: int | None = None
+    nonbasics: int | None = None
 
 
 def _popularity_key(name: str) -> str:
@@ -208,6 +238,73 @@ class EdhrecClient:
             return []
         return data.get("table") or []
 
+    def _commander_page(self, commander: str) -> dict | None:
+        """The raw (disk-cached) EDHREC commander page, or ``None`` if there is none.
+
+        Shared by the popularity and average-composition readers so one commander
+        costs one fetch: the second reader is a disk-cache hit, not a round trip.
+        A 403 here is a WAF/rate block, not an empty commander, so it raises.
+        """
+        slug = format_commander_name(commander)
+        try:
+            return self._http.get_json(
+                COMMANDER_PAGE_URL.format(slug=slug),
+                cache_namespace="edhrec-commander",
+                cache_key=slug,
+                ttl_seconds=DECK_TABLE_TTL_SECONDS,
+            )
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == _NO_PAGE_STATUS:
+                return None
+            if status == _BLOCKED_STATUS:
+                raise EdhrecBlocked(
+                    f"EDHREC returned 403 for commander stats {commander!r} — "
+                    "likely a rate/WAF block, not an empty commander."
+                ) from exc
+            raise
+
+    def fetch_commander_average(self, commander: str) -> CommanderAverage | None:
+        """EDHREC's average mainboard composition for a commander (see
+        ``CommanderAverage``), or ``None`` when EDHREC has no page for it.
+
+        Costs no extra request in practice: it reads the same disk-cached page as
+        ``fetch_commander_card_stats``. The type counts are top-level scalars and
+        the curve is ``panels.mana_curve``; both are rounded population averages,
+        so they sum to ~99 rather than exactly 99.
+        """
+        data = self._commander_page(commander)
+        if not isinstance(data, dict):
+            return None
+
+        types = {
+            label: int(data[key])
+            for label in CATEGORY_ORDER
+            if isinstance(data.get(key := label.casefold()), (int, float))
+        }
+        if not types:
+            return None  # a page without the composition scalars is not usable
+
+        raw_curve = (data.get("panels") or {}).get("mana_curve")
+        curve: dict[int, int] = {}
+        if isinstance(raw_curve, dict):
+            for mv, count in raw_curve.items():
+                try:
+                    curve[int(mv)] = int(count)
+                except (TypeError, ValueError):
+                    continue  # a non-numeric bucket is skipped, not fatal
+
+        def _scalar(key: str) -> int | None:
+            value = data.get(key)
+            return int(value) if isinstance(value, (int, float)) else None
+
+        return CommanderAverage(
+            types=types,
+            curve=curve,
+            basics=_scalar("basic"),
+            nonbasics=_scalar("nonbasic"),
+        )
+
     def fetch_commander_card_stats(self, commander: str) -> PopularityIndex:
         """Aggregate card popularity for a commander: ``{card -> CardPopularity}``.
 
@@ -218,24 +315,9 @@ class EdhrecClient:
 
         Returns an empty index when EDHREC has no page for the commander.
         """
-        slug = format_commander_name(commander)
-        try:
-            data = self._http.get_json(
-                COMMANDER_PAGE_URL.format(slug=slug),
-                cache_namespace="edhrec-commander",
-                cache_key=slug,
-                ttl_seconds=DECK_TABLE_TTL_SECONDS,
-            )
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            if status == _NO_PAGE_STATUS:
-                return PopularityIndex({})
-            if status == _BLOCKED_STATUS:
-                raise EdhrecBlocked(
-                    f"EDHREC returned 403 for commander stats {commander!r} — "
-                    "likely a rate/WAF block, not an empty commander."
-                ) from exc
-            raise
+        data = self._commander_page(commander)
+        if data is None:
+            return PopularityIndex({})
 
         container = data.get("container") if isinstance(data, dict) else None
         json_dict = container.get("json_dict") if isinstance(container, dict) else None

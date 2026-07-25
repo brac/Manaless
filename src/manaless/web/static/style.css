@@ -97,8 +97,13 @@ select:focus { outline: 2px solid var(--accent); }
   transition: box-shadow .15s ease;  /* combo outlines fade in when readouts land */
 }
 .card.unresolved { border-color: var(--warn); }
-.card img { width: 100%; border-radius: 6px; display: block; }
-.card .noimg { aspect-ratio: 5/7; display: grid; place-items: center; text-align: center; padding: .4rem; background: var(--panel2); border-radius: 6px; font-size: .8rem; }
+/* Scryfall `normal` images are a fixed 488x680 (ratio 61/85, ~0.7176) — hardcode
+   it, not a rounded decimal, so the box is reserved before the image loads and
+   never reflows the grid on an htmx swap. */
+.card img { width: 100%; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 6px; display: block; }
+/* Must match `.card img` exactly, or a card resizes the instant enrichment
+   resolves and swaps the placeholder for the real image. */
+.card .noimg { aspect-ratio: 488 / 680; display: grid; place-items: center; text-align: center; padding: .4rem; background: var(--panel2); border-radius: 6px; font-size: .8rem; }
 .cardname { font-size: .82rem; line-height: 1.25; }
 /* margin-top:auto pins the controls to the card's bottom so they line up across a
    row whether or not a card shows the (conditional) popularity bar. */

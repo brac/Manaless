@@ -42,15 +42,18 @@
   </div>
 </div>
 
-{# Full-size card image modal (E1); populated + toggled by ui.js on card click. #}
+{# Full-size card image modal (E1); populated + toggled by ui.js on card click.
+   Sized like the grid's card img (Scryfall `normal` is a fixed 488x680) so this
+   counts as a reserved box, not an unsized <img>, even while hidden/empty. #}
 <div id="cardmodal" class="cardmodal" hidden>
-  <img alt="">
+  <img alt="" width="488" height="680">
 </div>
 
 {# Hover preview: ui.js shows a card image here while hovering a [data-img] element
-   (e.g. a palette "add" button), positioned next to the cursor. #}
+   (e.g. a palette "add" button), positioned next to the cursor. Same fixed-size
+   rationale as #cardmodal above. #}
 <div id="cardpreview" class="cardpreview" hidden>
-  <img alt="">
+  <img alt="" width="488" height="680">
 </div>
 </div>{# /#builder #}
 {% endblock %}

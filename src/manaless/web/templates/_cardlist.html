@@ -10,6 +10,15 @@
         {% if owned and owned.owns(card.name) %}<span class="owned-tag" title="In your collection">✓ owned</span>{% endif %}
       </div>
 {%- endmacro -%}
+{#- The buy link doubles as the price tag: TCGplayer market price for one copy,
+   from Scryfall's cached card payload (no extra API call). Falls back to a bare
+   "$" when Scryfall has no USD price for the card. -#}
+{%- macro buy_link(card) -%}
+        <a class="buy{% if card.price_usd is none %} unpriced{% endif %}" href="{{ buy_url(card.name) }}"
+           target="_blank" rel="noopener"
+           title="{% if card.price_usd is none %}No TCGplayer price — buy on TCGplayer{% else %}~${{ '%.2f'|format(card.price_usd) }} each on TCGplayer{% if card.quantity > 1 %} (${{ '%.2f'|format(card.line_price) }} for {{ card.quantity }}){% endif %}{% endif %}"
+           >{% if card.price_usd is none %}${% else %}${{ '%.2f'|format(card.price_usd) }}{% endif %}</a>
+{%- endmacro -%}
 {% if deck.unresolved %}
 <p class="warn">Unenriched (Scryfall couldn't resolve): {{ deck.unresolved | join(', ') }}</p>
 {% endif %}
@@ -29,8 +38,7 @@
     <div class="card commander{% if not card.resolved %} unresolved{% endif %}" data-name="{{ card.name }}">{{ card_media(card) }}
       <div class="cardctl">
         <span class="cmd-tag" title="Your commander — export includes it">★ commander</span>
-        <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
-           title="Buy on TCGplayer">$</a>
+{{ buy_link(card) }}
       </div>
     </div>
     {% endfor %}
@@ -56,8 +64,7 @@
                 hx-get="/build/suggest?old_name={{ card.name | urlencode }}"
                 hx-target="#swapmodal-body" hx-swap="innerHTML"
                 hx-indicator="#global-spinner">swap</button>
-        <a class="buy" href="{{ buy_url(card.name) }}" target="_blank" rel="noopener"
-           title="Buy on TCGplayer">$</a>
+{{ buy_link(card) }}
         <button class="rm" title="remove" hx-post="/build/remove" hx-target="#cardlist"
                 hx-swap="outerHTML" hx-indicator="#global-spinner"
                 hx-vals='{"name": {{ card.name | tojson }} }'>✕</button>

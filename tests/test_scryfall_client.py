@@ -257,3 +257,100 @@ def test_search_commanders_404_is_empty_page(tmp_path):
     http = _http(tmp_path, lambda r: httpx.Response(404, json={"object": "error"}))
     result = search_commanders(http, "zzzznotacommander")
     assert result.names == () and result.has_more is False and result.total == 0
+
+
+# --- TCGplayer price passthrough ------------------------------------------
+# Scryfall's USD prices come from TCGplayer and ride along in the card payload
+# we already fetch, so the deck-builder price tags cost zero extra requests.
+
+
+def _priced(**prices):
+    return {**NORMAL, "prices": {"usd": None, "usd_foil": None, "usd_etched": None, **prices}}
+
+
+def test_parses_usd_price(tmp_path):
+    http = _http(tmp_path, lambda r: httpx.Response(200, json=_priced(usd="1.47")))
+    assert get_card_metadata(http, "Sol Ring").price_usd == 1.47
+
+
+@pytest.mark.parametrize(
+    ("prices", "expected"),
+    [
+        ({"usd_foil": "12.50"}, 12.50),                    # foil-only printing
+        ({"usd_etched": "9.00"}, 9.00),                    # etched-only printing
+        ({"usd_foil": "12.50", "usd_etched": "9.00"}, 12.50),  # foil wins over etched
+        ({"usd": "1.00", "usd_foil": "12.50"}, 1.00),      # non-foil always wins
+    ],
+)
+def test_price_falls_back_to_foil_then_etched(tmp_path, prices, expected):
+    # Each case needs its own cache dir, or a later case reads the earlier's entry.
+    http = _http(tmp_path, lambda r: httpx.Response(200, json=_priced(**prices)))
+    assert get_card_metadata(http, "Sol Ring").price_usd == expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        NORMAL,                                    # no prices block at all
+        {**NORMAL, "prices": {}},                  # empty block
+        {**NORMAL, "prices": {"usd": None}},       # explicitly unpriced
+        {**NORMAL, "prices": {"usd": ""}},         # blank string
+        {**NORMAL, "prices": {"usd": "n/a"}},      # unparseable
+        {**NORMAL, "prices": ["usd", "1.00"]},     # wrong shape (stale cache schema)
+    ],
+)
+def test_unpriced_or_malformed_reads_as_none(tmp_path, payload):
+    http = _http(tmp_path, lambda r: httpx.Response(200, json=payload))
+    assert get_card_metadata(http, "Sol Ring").price_usd is None
+
+
+def test_stale_cached_card_is_refetched_so_prices_do_not_freeze(tmp_path):
+    """The card cache carries prices, so it expires rather than living forever."""
+    from manaless.scryfall_client import CACHE_NAMESPACE, CARD_TTL_SECONDS
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json=_priced(usd="2.00"))
+
+    http = _http(tmp_path, handler)
+    get_card_metadata(http, "Sol Ring")
+    assert calls["n"] == 1
+    get_card_metadata(http, "Sol Ring")
+    assert calls["n"] == 1  # warm: served from cache
+
+    # Backdate the entry past the TTL; the next read must go to the network.
+    path = DiskCache(tmp_path)._path(CACHE_NAMESPACE, "Sol Ring")
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    entry["stored_at"] -= CARD_TTL_SECONDS + 1
+    path.write_text(json.dumps(entry), encoding="utf-8")
+
+    get_card_metadata(http, "Sol Ring")
+    assert calls["n"] == 2
+
+
+def test_get_collection_also_expires_stale_entries(tmp_path):
+    from manaless.scryfall_client import CACHE_NAMESPACE, CARD_TTL_SECONDS
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"data": [_priced(usd="3.00")], "not_found": []})
+
+    http = _http(tmp_path, handler)
+    by_name, _ = get_collection(http, ["Sol Ring"])
+    assert by_name["Sol Ring"].price_usd == 3.00
+    assert calls["n"] == 1
+
+    get_collection(http, ["Sol Ring"])
+    assert calls["n"] == 1  # warm
+
+    path = DiskCache(tmp_path)._path(CACHE_NAMESPACE, "Sol Ring")
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    entry["stored_at"] -= CARD_TTL_SECONDS + 1
+    path.write_text(json.dumps(entry), encoding="utf-8")
+
+    get_collection(http, ["Sol Ring"])
+    assert calls["n"] == 2

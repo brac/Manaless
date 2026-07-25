@@ -3,8 +3,15 @@
 `GET cards/named?exact={name}` → the fields the win-condition heuristic and
 bracket evaluator need. DFC / split / transform cards have no top-level
 `image_uris` / `oracle_text`; fall back to `card_faces` (image from face 0,
-oracle text concatenated). Cached by exact card name forever — card data is
-near-static.
+oracle text concatenated).
+
+Cached by exact card name. Card *text* is near-static, but the same payload
+carries `prices` (Scryfall sources USD from TCGplayer), which is not — so the
+cache is read with a week-long TTL rather than forever. That keeps the price
+estimate roughly current at no extra request cost: a refresh rides the same
+batched `cards/collection` call the deck build already makes (~2 requests for a
+100-card deck), and the price itself costs zero extra calls because it is
+already in the bytes we fetch.
 """
 
 from __future__ import annotations
@@ -41,6 +48,15 @@ _NAME_LOOKUP_TTL_SECONDS = 24 * 60 * 60
 # EDHREC-ranked commander search feeds the browse gallery (§ commander picker).
 _COMMANDER_QUERY = "is:commander"
 
+# Card payloads carry `prices`, so they can't cache forever (see module docstring).
+# A week keeps the buy estimate honest without making cold builds common.
+CARD_TTL_SECONDS = 7 * 24 * 60 * 60
+
+# Scryfall's USD prices come from TCGplayer. `usd` is the non-foil market price and
+# is null for cards that were never printed in non-foil (or etched-only), so fall
+# back through the foil variants rather than showing nothing.
+_USD_PRICE_KEYS = ("usd", "usd_foil", "usd_etched")
+
 
 @dataclass(frozen=True, slots=True)
 class ScryfallCard:
@@ -56,6 +72,10 @@ class ScryfallCard:
     # True when Scryfall returned multiple faces (DFC/transform, but also split
     # and adventure) — i.e. "has faces", not strictly a double-faced card.
     has_faces: bool
+    # TCGplayer market price in USD for the printing Scryfall returns by default —
+    # an estimate, not the cheapest printing available (finding that costs a
+    # per-card request, which the build deliberately avoids). None when unpriced.
+    price_usd: float | None = None
 
 
 class ScryfallError(RuntimeError):
@@ -71,7 +91,11 @@ def get_card_metadata(http: HttpClient, name: str) -> ScryfallCard:
     url = NAMED_URL.format(query=quote(name))
     try:
         data = http.get_json(
-            url, cache_namespace=CACHE_NAMESPACE, cache_key=name, headers=_ACCEPT
+            url,
+            cache_namespace=CACHE_NAMESPACE,
+            cache_key=name,
+            ttl_seconds=CARD_TTL_SECONDS,
+            headers=_ACCEPT,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
@@ -98,7 +122,7 @@ def get_collection(
     by_name: dict[str, ScryfallCard] = {}
     misses: list[str] = []
     for name in dict.fromkeys(names):  # de-dupe, preserve order
-        cached = http.cache.get(CACHE_NAMESPACE, name)
+        cached = http.cache.get(CACHE_NAMESPACE, name, ttl_seconds=CARD_TTL_SECONDS)
         if cached is not None:
             by_name[name] = _parse_card(cached)
         else:
@@ -222,4 +246,25 @@ def _parse_card(data: dict) -> ScryfallCard:
         image_url=image,
         scryfall_uri=data.get("scryfall_uri"),
         has_faces=bool(faces),
+        price_usd=_parse_price(data.get("prices")),
     )
+
+
+def _parse_price(prices: object) -> float | None:
+    """First usable USD price from a Scryfall ``prices`` block, else ``None``.
+
+    Every value in the block is a decimal *string* or null, and an unpriced card
+    (or a malformed block from a cache entry written by an older schema) must read
+    as "no price" rather than raise — the tile just shows a dash.
+    """
+    if not isinstance(prices, dict):
+        return None
+    for key in _USD_PRICE_KEYS:
+        raw = prices.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None

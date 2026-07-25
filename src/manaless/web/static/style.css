@@ -105,8 +105,12 @@ select:focus { outline: 2px solid var(--accent); }
 .cardctl { display: flex; gap: .3rem; margin-top: auto; }
 .rm { background: var(--panel2); color: var(--muted); padding: .25rem .5rem; }
 .rm:hover { background: var(--bad); color: #1a0000; }
-.buy { background: var(--panel2); color: var(--good); border: 1px solid var(--border); border-radius: 7px; padding: .25rem .5rem; font-weight: 700; display: grid; place-items: center; }
+/* The buy link carries the TCGplayer price, so it sizes to its text and takes the
+   slack in the control row; `.unpriced` is the bare "$" fallback. */
+.buy { background: var(--panel2); color: var(--good); border: 1px solid var(--border); border-radius: 7px; padding: .25rem .5rem; font-weight: 700; display: grid; place-items: center; flex: 1; font-size: .78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .buy:hover { background: var(--good); color: #042417; text-decoration: none; }
+.buy.unpriced { color: var(--muted); flex: 0 0 auto; }
+.deckprice { color: var(--good); font-variant-numeric: tabular-nums; }
 
 /* --- collection / owned --- */
 .owned-summary { color: var(--muted); margin: 0 0 .8rem; }

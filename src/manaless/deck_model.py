@@ -45,7 +45,17 @@ class Card:
     image_url: str | None = None
     scryfall_uri: str | None = None
     has_faces: bool = False  # multi-face card (DFC/split/adventure); metadata only
+    # TCGplayer market price (USD) for one copy, from Scryfall's default printing.
+    # None when unpriced or unresolved. See `scryfall_client.ScryfallCard`.
+    price_usd: float | None = None
     resolved: bool = True
+
+    @property
+    def line_price(self) -> float | None:
+        """Price for this entry's full quantity (``10 Forest`` = 10 copies)."""
+        if self.price_usd is None:
+            return None
+        return self.price_usd * self.quantity
 
     @property
     def category(self) -> str:
@@ -81,6 +91,21 @@ class DeckModel:
     def unresolved(self) -> tuple[str, ...]:
         """Names whose Scryfall enrichment failed."""
         return tuple(card.name for card in self.all_cards() if not card.resolved)
+
+    @property
+    def total_price(self) -> float:
+        """Rough USD cost of the whole deck, commanders included.
+
+        Sums the per-copy TCGplayer estimate across every priced entry. Unpriced
+        cards contribute 0 and are counted by `unpriced_count`, so the UI can say
+        the total is a floor rather than implying the deck was fully priced.
+        """
+        return sum(card.line_price or 0.0 for card in self.all_cards())
+
+    @property
+    def unpriced_count(self) -> int:
+        """How many entries carry no price (unresolved, or no USD on Scryfall)."""
+        return sum(1 for card in self.all_cards() if card.price_usd is None)
 
     def card_names(self) -> list[str]:
         return [card.name for card in self.all_cards()]

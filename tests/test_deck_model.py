@@ -169,3 +169,39 @@ def test_add_merge_prefers_the_resolved_side():
 def test_commanders_untouched_by_substitution():
     deck = _src_deck().substitute("Sol Ring", _c("Arcane Signet", "Artifact"))
     assert [c.name for c in deck.commanders] == ["Atraxa, Praetors' Voice"]
+
+
+# --- price rollup (deck-builder cost estimate) -----------------------------
+
+
+def test_line_price_multiplies_by_quantity():
+    assert Card(name="Forest", quantity=10, price_usd=0.25).line_price == 2.5
+    assert Card(name="Sol Ring", quantity=1, price_usd=1.5).line_price == 1.5
+
+
+def test_line_price_is_none_when_unpriced():
+    assert Card(name="Mystery", quantity=3).line_price is None
+
+
+def test_total_price_sums_commanders_and_mainboard_by_quantity():
+    deck = DeckModel(
+        commanders=(Card(name="Atraxa", quantity=1, price_usd=10.0),),
+        cards=(
+            Card(name="Sol Ring", quantity=1, price_usd=1.50),
+            Card(name="Forest", quantity=10, price_usd=0.25),
+        ),
+    )
+    assert deck.total_price == pytest.approx(14.0)
+    assert deck.unpriced_count == 0
+
+
+def test_unpriced_cards_contribute_zero_and_are_counted():
+    deck = DeckModel(
+        commanders=(Card(name="Atraxa", quantity=1, price_usd=10.0),),
+        cards=(
+            Card(name="No Price", quantity=2),
+            Card(name="Unresolved", quantity=1, resolved=False),
+        ),
+    )
+    assert deck.total_price == pytest.approx(10.0)  # a floor, not the real total
+    assert deck.unpriced_count == 2

@@ -168,6 +168,7 @@ def _to_card(quantity: int, name: str, meta: ScryfallCard | None) -> Card:
         image_url=meta.image_url,
         scryfall_uri=meta.scryfall_uri,
         has_faces=meta.has_faces,
+        price_usd=meta.price_usd,
     )
 
 

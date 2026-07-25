@@ -198,6 +198,9 @@ def _palette_view(cp, meta) -> dict:
         "type_abbr": abbr,
         "type_full": full,
         "image_url": meta.image_url if meta else None,
+        # Same TCGplayer estimate the deck tiles show. Free here: palette candidates
+        # are already enriched through the build-time batched Scryfall call.
+        "price_usd": meta.price_usd if meta else None,
     }
 
 
@@ -603,7 +606,14 @@ def build_suggest(
     return templates.TemplateResponse(
         request,
         "_swap_suggestions.html",
-        {"old_name": old_name.strip(), "category": category, "suggestions": suggestions},
+        {
+            "old_name": old_name.strip(),
+            "category": category,
+            "suggestions": suggestions,
+            # Price of the card going out, so each suggestion can show what the
+            # swap costs or saves. None when it's unpriced (no delta shown).
+            "old_price": card.price_usd if card is not None else None,
+        },
     )
 
 

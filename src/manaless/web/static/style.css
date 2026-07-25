@@ -146,6 +146,12 @@ select:focus { outline: 2px solid var(--accent); }
 .addlist { list-style: none; margin: .3rem 0 0; padding: 0; max-height: none; }
 .addlist li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }
 .addlist .add { flex: 1; text-align: left; }
+/* Price column on palette / swap rows. Fixed min-width + tabular figures so the
+   numbers line up down the list instead of ragging with each row's name length. */
+.listprice { color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 3.8em; text-align: right; }
+.listprice.cheaper { color: var(--good); }
+.listprice.pricier { color: var(--bad); }
+.swaphead .listprice { min-width: 0; font-size: .8rem; }
 .type-tag {
   font-size: .62rem; font-weight: 700; letter-spacing: .04em;
   color: var(--muted); background: var(--panel2); border: 1px solid var(--border);

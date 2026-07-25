@@ -41,6 +41,9 @@ class FakeEdhrec:
             "sol ring": CardPopularity("Sol Ring", 85, 100, -0.02),  # in the deck (85%)
             "smothering tithe": CardPopularity("Smothering Tithe", 60, 100, -0.1),  # not in deck
             "rhystic study": CardPopularity("Rhystic Study", 55, 100, 0.2),  # not in deck
+            # Enriched but carries no USD price — keeps the "no price tag" path covered
+            # on both the palette and the swap suggestions.
+            "unpriced relic": CardPopularity("Unpriced Relic", 40, 100, 0.0),
         })
 
     def fetch_top_commanders(self):
@@ -54,11 +57,23 @@ class FakeEdhrec:
         return [TopCommander(name=n, num_decks=d) for n, d in ranked]
 
 
+# TCGplayer estimates for the fake pool. "Unpriced Relic" is deliberately absent, so
+# the no-price fallback path stays covered.
+_PRICES = {
+    "Atraxa, Praetors' Voice": 32.50,
+    "Sol Ring": 1.50,
+    "Counterspell": 0.50,
+    "Smothering Tithe": 25.00,   # pricier than Sol Ring -> "+$23.50" in the swap modal
+    "Rhystic Study": 0.75,       # cheaper than Sol Ring -> "-$0.75"
+}
+
+
 def _meta(name):
     tl = "Legendary Creature" if "Atraxa" in name else "Artifact"
     return ScryfallCard(
         name=name, type_line=tl, oracle_text=f"text of {name}", mana_value=1.0,
         color_identity=(), image_url=f"http://img/{name}.png", scryfall_uri=None, has_faces=False,
+        price_usd=_PRICES.get(name),
     )
 
 
@@ -726,3 +741,58 @@ def test_over_100_warning(client):
         assert "over 100" in r2.text
     finally:
         app.dependency_overrides[get_edhrec] = lambda: FakeEdhrec()
+
+
+# --- TCGplayer prices on palette + swap suggestions -----------------------
+# Palette candidates ride the same batched Scryfall enrichment as the deck, so
+# these numbers cost no extra requests.
+
+
+def test_palette_shows_price_per_suggestion(client):
+    r = _build(client)
+    assert 'class="listprice"' in r.text
+    assert "$25.00" in r.text  # Smothering Tithe, offered as an add
+
+
+def test_palette_omits_price_when_scryfall_has_none(client):
+    """An unpriced suggestion is still offered, just with no price tag."""
+    r = _build(client)
+    assert "Unpriced Relic" in r.text          # still a valid suggestion
+    assert "$None" not in r.text and "$0.00" not in r.text
+
+    # The row itself carries no price span: slice out just this <li>.
+    row = r.text[r.text.index("Unpriced Relic"):]
+    assert "listprice" not in row[: row.index("</li>")]
+
+
+def test_swap_suggestion_without_price_shows_no_delta(client):
+    """A delta needs both sides priced; an unpriced candidate shows nothing."""
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    row = r.text[r.text.index("Unpriced Relic"):]
+    assert "listprice" not in row[: row.index("</li>")]
+
+
+def test_swap_modal_shows_outgoing_card_price(client):
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    assert "$1.50" in r.text  # Sol Ring, the card being swapped out
+
+
+def test_swap_suggestions_show_price_delta_not_bare_price(client):
+    """With both sides priced the useful figure is the delta, signed and coloured."""
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    # Smothering Tithe ($25.00) for Sol Ring ($1.50) -> adds $23.50
+    assert "+$23.50" in r.text
+    assert 'listprice pricier' in r.text
+    # Rhystic Study ($0.75) for Sol Ring ($1.50) -> saves $0.75
+    assert "\u2212$0.75" in r.text
+    assert 'listprice cheaper' in r.text
+
+
+def test_swap_delta_tooltip_explains_both_sides(client):
+    _build(client)
+    r = client.get("/build/suggest", params={"old_name": "Sol Ring"})
+    assert "$25.00 vs $1.50 — adds $23.50" in r.text
+    assert "$0.75 vs $1.50 — saves $0.75" in r.text

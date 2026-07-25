@@ -10,6 +10,7 @@
               hx-indicator="#global-spinner" hx-vals='{"name": {{ cp.name | tojson }} }'>+ {{ cp.name }}</button>
       {% if cp.type_abbr %}<span class="type-tag" title="{{ cp.type_full }}">{{ cp.type_abbr }}</span>{% endif %}
       <span class="muted" title="Run in {{ cp.num_decks }} of {{ cp.potential_decks }} EDHREC decks">{{ cp.percent | round | int }}%</span>
+      {% if cp.price_usd is not none %}<span class="listprice" title="~${{ '%.2f'|format(cp.price_usd) }} on TCGplayer">${{ '%.2f'|format(cp.price_usd) }}</span>{% endif %}
     </li>
     {% endfor %}
   </ul>

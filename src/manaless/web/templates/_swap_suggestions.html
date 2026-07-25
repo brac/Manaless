@@ -4,7 +4,7 @@
    which returns _update.html (OOB-refreshing the card list, readouts, palette,
    count, flash). ui.js closes the modal on a successful swap. #}
 <div class="swaphead">
-  <h2>Swap out {{ old_name }}</h2>
+  <h2>Swap out {{ old_name }}{% if old_price is not none %} <span class="listprice">${{ '%.2f'|format(old_price) }}</span>{% endif %}</h2>
   <p class="muted">Same category: <strong>{{ category }}</strong> — pick a replacement, or search for any card.</p>
 </div>
 
@@ -27,6 +27,17 @@
     </form>
     {% if cp.type_abbr %}<span class="type-tag" title="{{ cp.type_full }}">{{ cp.type_abbr }}</span>{% endif %}
     <span class="muted" title="Run in {{ cp.num_decks }} of {{ cp.potential_decks }} EDHREC decks">{{ cp.percent | round | int }}%</span>
+    {%- if cp.price_usd is not none %}
+    {#- With both sides priced, the useful number is the delta: what this swap adds
+       to or takes off the deck total. Falls back to the bare price otherwise. -#}
+    {% if old_price is not none %}{% set delta = cp.price_usd - old_price %}
+    <span class="listprice {{ 'cheaper' if delta < 0 else 'pricier' }}"
+          title="${{ '%.2f'|format(cp.price_usd) }} vs ${{ '%.2f'|format(old_price) }} — {% if delta < 0 %}saves ${{ '%.2f'|format(-delta) }}{% elif delta > 0 %}adds ${{ '%.2f'|format(delta) }}{% else %}same price{% endif %}"
+      >{% if delta < 0 %}−${{ '%.2f'|format(-delta) }}{% elif delta > 0 %}+${{ '%.2f'|format(delta) }}{% else %}±$0{% endif %}</span>
+    {% else %}
+    <span class="listprice" title="~${{ '%.2f'|format(cp.price_usd) }} on TCGplayer">${{ '%.2f'|format(cp.price_usd) }}</span>
+    {% endif %}
+    {%- endif %}
   </li>
   {% endfor %}
 </ul>

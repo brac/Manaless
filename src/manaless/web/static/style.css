@@ -73,9 +73,17 @@ select { background: var(--panel); color: var(--ink); border: 1px solid var(--bo
 select:focus { outline: 2px solid var(--accent); }
 
 /* --- builder --- */
-.topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--border); }
+.topbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--border); }
 .topbar .cmd { display: flex; align-items: center; gap: .6rem; font-size: 1.05rem; }
-.topbar .actions { display: flex; gap: .5rem; align-items: center; }
+.topbar .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.topbar .back {
+  display: inline-flex; place-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px;
+}
+.topbar .btn, .topbar button {
+  min-height: 44px; padding-top: .6rem; padding-bottom: .6rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 
 .flash { color: var(--warn); min-height: 1.2rem; padding: .3rem 0; }
 .flash:empty { display: none; }
@@ -119,6 +127,8 @@ select:focus { outline: 2px solid var(--accent); }
 
 /* --- collection / owned --- */
 .owned-summary { color: var(--muted); margin: 0 0 .8rem; }
+/* Body-copy link, not chrome — clears the 24px AA floor, not the 44px topbar one. */
+.owned-summary a { display: inline-block; padding: .2rem 0; }
 .owned-tag { color: var(--good); font-size: .72rem; white-space: nowrap; }
 .pop { display: flex; align-items: center; gap: .35rem; font-size: .7rem; color: var(--muted); }
 .pop .popbar { flex: 1; height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; }
@@ -267,4 +277,10 @@ select:focus { outline: 2px solid var(--accent); }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .right { position: static; max-height: none; overflow: visible; }
+}
+
+/* --- phone: topbar actions drop to their own full-width row --- */
+@media (max-width: 560px) {
+  .topbar .actions { width: 100%; }
+  .topbar .actions .btn, .topbar .actions button { flex: 1 1 auto; }
 }

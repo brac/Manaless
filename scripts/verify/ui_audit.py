@@ -68,6 +68,10 @@ THRESHOLDS = {
     # Rendered aspect ratio must match the real asset — reserving a box is useless
     # if it is the wrong shape. See _RENDERED_RATIO for the regression this caught.
     "misshaped_images": 0,
+    # The full-size card view must not be squashed. Rect checks skip it because it
+    # is [hidden] until opened, so the audit opens it for real. Shipped squashed once
+    # (351x680 instead of 351x489) because the height attribute pinned its height.
+    "modal_ratio_off": 0,
     # Tiles must stay browsable on a phone. 1.1 cards per screen shipped once.
     "min_cards_per_screen": 2.0,
     "horizontal_overflow_px": 0,
@@ -226,6 +230,36 @@ def _delay_image(route):
     route.continue_()
 
 
+def _measure_modal(page) -> dict:
+    """Open the full-size card view and measure it.
+
+    A static check cannot cover this: `#cardmodal` is `[hidden]` until clicked, and
+    `getComputedStyle().height` returns the USED value (resolved px) for anything
+    laid out, so it cannot tell a resolved `auto` from a pinned 680px. The only
+    honest way to gate the modal is to open it and measure the rendered box.
+    """
+    want = 488 / 680
+    try:
+        page.locator("#cardlist .card img").first.click()
+        page.wait_for_timeout(700)
+        m = page.evaluate(
+            """() => { const i = document.querySelector('#cardmodal img');
+                 if (!i) return null; const r = i.getBoundingClientRect();
+                 return { w: Math.round(r.width), h: Math.round(r.height),
+                          ratio: r.height ? r.width / r.height : 0 }; }"""
+        )
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+    except Exception as exc:
+        return {"error": str(exc)[:80], "off": 1}
+    if not m or not m["ratio"]:
+        return {"error": "modal image not measurable", "off": 1}
+    m["want"] = round(want, 3)
+    m["ratio"] = round(m["ratio"], 3)
+    m["off"] = 1 if abs(m["ratio"] - want) > 0.02 else 0
+    return m
+
+
 def _open_builder(page, base: str) -> None:
     """Drive the real UI to a built deck (no API shortcuts — audit what ships)."""
     page.goto(f"{base}/decks?commander={COMMANDER.replace(' ', '%20')}", wait_until="load")
@@ -354,6 +388,7 @@ def audit(base: str, shots: Path | None) -> dict:
                     "unsized_images": page.evaluate(_UNSIZED_IMAGES),
                     "rendered_ratio": page.evaluate(_RENDERED_RATIO),
                     "card_fit": page.evaluate(_CARD_FIT),
+                    "modal": _measure_modal(page),
                     "overflow": page.evaluate(_OVERFLOW),
                     "tap_targets": page.evaluate(_TAP_TARGETS),
                 }
@@ -380,6 +415,7 @@ def report(results: dict) -> bool:
              THRESHOLDS["settle_drift_px"], "<="),
             ("unsized images", r["unsized_images"]["count"], THRESHOLDS["unsized_images"], "<="),
             ("misshaped images", r["rendered_ratio"]["count"], THRESHOLDS["misshaped_images"], "<="),
+            ("modal img squashed", r["modal"]["off"], THRESHOLDS["modal_ratio_off"], "<="),
             ("min cards/screen", -(r["card_fit"]["perScreen"] if r["card_fit"] else 0),
              -THRESHOLDS["min_cards_per_screen"], "<="),
             ("horiz overflow px", r["overflow"]["overflow"], THRESHOLDS["horizontal_overflow_px"], "<="),
@@ -404,6 +440,11 @@ def report(results: dict) -> bool:
         cf = r["card_fit"]
         if cf:
             print(f"  card tile          : {cf['cardW']}x{cf['cardH']}px  ->  {cf['perScreen']} per screen")
+        md = r["modal"]
+        if "error" in md:
+            print(f"  full-size view     : ERROR {md['error']}")
+        else:
+            print(f"  full-size view     : {md['w']}x{md['h']}  ratio {md['ratio']} (want {md['want']})")
         rr = r["rendered_ratio"]
         print(f"  image ratio        : {rr['checked']} checked, want {rr['want']}, {rr['count']} off")
         if rr["count"]:

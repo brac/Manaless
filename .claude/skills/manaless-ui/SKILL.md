@@ -48,6 +48,24 @@ gates on the **rendered** ratio (`misshaped images`) and on tiles staying browsa
 (`min cards/screen` ≥ 2.0), because the earlier check only verified that sizing
 hints existed and passed straight through this defect.
 
+**It applies to every `<img>` with those attributes, not just the grid.** The same
+bug shipped a second time in `.cardmodal img` and `.cardpreview img`: `max-width:
+90vw` squeezed the width on a phone while the height attribute held it at 680px, so
+the full-size card view rendered 351×680 instead of 351×489 — visibly squashed.
+
+Two testing lessons baked into the audit from that round:
+
+- **`getComputedStyle(img).height` cannot detect this on visible elements.** It
+  returns the *used* value (resolved px), so a correct `height: auto` and a pinned
+  `680px` both read as a number. It only reports `'auto'` for `display: none`
+  elements. A static check here produces false positives — measure the rendered
+  rect instead.
+- **`#cardmodal` / `#cardpreview` are `[hidden]` until used, so rect checks skip
+  them.** The audit now *opens* the modal and measures it. Anything hidden behind
+  an interaction needs a behavioural gate, not a DOM scan.
+- **This class of bug is mobile-only.** At 1440px `max-width` never engages, so the
+  modal renders correctly and the gate passes. Always check the phone viewport.
+
 ### Measuring it — CLS will lie to you
 
 `layout-shift` entries within 500ms of a click carry `hadRecentInput: true` and are

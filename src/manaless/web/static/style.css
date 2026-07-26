@@ -199,7 +199,10 @@ select:focus { outline: 2px solid var(--accent); }
 /* --- hover card preview (palette) --- */
 .cardpreview { position: absolute; z-index: 55; pointer-events: none; }
 .cardpreview[hidden] { display: none; }
-.cardpreview img { width: 300px; max-width: 44vw; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); display: block; }
+/* height:auto is load-bearing — see `.card img`. The width/height attributes on the
+   tag pin height to 680px, so without this the preview renders 300x680 (stretched)
+   instead of 300x418. */
+.cardpreview img { width: 300px; height: auto; max-width: 44vw; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); display: block; }
 
 /* --- topbar card count + over-100 hint (B1/B2) --- */
 .count .over { color: var(--warn); margin-left: .3rem; white-space: nowrap; }
@@ -217,7 +220,11 @@ select:focus { outline: 2px solid var(--accent); }
   cursor: zoom-out;
 }
 .cardmodal[hidden] { display: none; }
-.cardmodal img { max-height: 90vh; max-width: 90vw; border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.6); }
+/* height:auto is load-bearing — see `.card img`. Without it the height attribute
+   pins the image to 680px while max-width squeezes the width to 90vw, so on a phone
+   the full-size view rendered ~351x680 (squashed) instead of ~351x489. With
+   height:auto the ratio is preserved and max-height still caps tall viewports. */
+.cardmodal img { height: auto; max-height: 90vh; max-width: 90vw; border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.6); }
 
 /* --- swap modal (category-matched suggestions) --- */
 .swapmodal {

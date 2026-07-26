@@ -30,6 +30,24 @@ Concretely, for any media inside a swap target:
 - `loading="lazy"` re-arms on every recreated element. It is fine *only* when the
   box is already reserved; otherwise it guarantees a reflow storm on each swap.
 
+### `height: auto` is mandatory whenever you set width/height attributes
+
+**This shipped as a bug once.** The `width`/`height` attributes become
+presentational hints — `height: 680px`. Combined with `width: 100%` from CSS, both
+dimensions are then explicitly specified, so **`aspect-ratio` is ignored entirely**.
+The result rendered 155×680 images and 760px-tall tiles: 1.1 cards per phone screen.
+
+The rule: attributes **and** `aspect-ratio` **and** `height: auto`, together.
+
+```css
+.card img { width: 100%; height: auto; aspect-ratio: 488 / 680; }
+```
+
+Reserving a box is not the same as reserving the *right* box. `ui_audit.py` now
+gates on the **rendered** ratio (`misshaped images`) and on tiles staying browsable
+(`min cards/screen` ≥ 2.0), because the earlier check only verified that sizing
+hints existed and passed straight through this defect.
+
 ### Measuring it — CLS will lie to you
 
 `layout-shift` entries within 500ms of a click carry `hadRecentInput: true` and are

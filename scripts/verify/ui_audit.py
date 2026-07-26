@@ -65,6 +65,11 @@ THRESHOLDS = {
     "cls_after_swap": 0.02,
     "scroll_drift_px": 2,
     "unsized_images": 0,
+    # Rendered aspect ratio must match the real asset — reserving a box is useless
+    # if it is the wrong shape. See _RENDERED_RATIO for the regression this caught.
+    "misshaped_images": 0,
+    # Tiles must stay browsable on a phone. 1.1 cards per screen shipped once.
+    "min_cards_per_screen": 2.0,
     "horizontal_overflow_px": 0,
     # Two tiers, deliberately. Demanding 44x44 everywhere is structurally
     # unmeetable in a 76-card grid whose tiles carry three controls each — it would
@@ -130,6 +135,42 @@ _UNSIZED_IMAGES = """
     if (!hasAttrs && !hasAR) bad.push(img.className || img.src.slice(-40));
   }
   return { count: bad.length, sample: bad.slice(0, 5) };
+}
+"""
+
+# Reserving a box is not enough — it has to be the RIGHT box. Shipped once: adding
+# width/height attributes made them presentational hints (height: 680px), which with
+# `width: 100%` meant both dimensions were specified and `aspect-ratio` was ignored,
+# rendering 155x680 cards. The old check passed because sizing hints *existed*.
+# This measures what actually rendered.
+_RENDERED_RATIO = """
+() => {
+  const want = 488 / 680, TOL = 0.02;
+  const bad = [];
+  let checked = 0;
+  for (const img of document.querySelectorAll('#cardlist .card img')) {
+    const r = img.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    checked++;
+    const ratio = r.width / r.height;
+    if (Math.abs(ratio - want) > TOL) {
+      bad.push({ w: Math.round(r.width), h: Math.round(r.height), ratio: +ratio.toFixed(3) });
+    }
+  }
+  return { checked, count: bad.length, want: +want.toFixed(3), sample: bad.slice(0, 4) };
+}
+"""
+
+# A card must not eat the whole phone screen. 760px-tall tiles on an 844px viewport
+# (1.1 cards visible) is the regression this catches; 2 tiles per screen is the
+# floor for a grid that is meant to be browsable.
+_CARD_FIT = """
+() => {
+  const c = document.querySelector('#cardlist .card');
+  if (!c) return null;
+  const r = c.getBoundingClientRect();
+  return { cardH: Math.round(r.height), cardW: Math.round(r.width),
+           perScreen: +(window.innerHeight / r.height).toFixed(2) };
 }
 """
 
@@ -311,6 +352,8 @@ def audit(base: str, shots: Path | None) -> dict:
                 r: dict = {
                     "load_cls": page.evaluate("() => window.__cls"),
                     "unsized_images": page.evaluate(_UNSIZED_IMAGES),
+                    "rendered_ratio": page.evaluate(_RENDERED_RATIO),
+                    "card_fit": page.evaluate(_CARD_FIT),
                     "overflow": page.evaluate(_OVERFLOW),
                     "tap_targets": page.evaluate(_TAP_TARGETS),
                 }
@@ -336,6 +379,9 @@ def report(results: dict) -> bool:
             ("settle drift px", sw["settle_drift"] if sw["settle_drift"] is not None else 9999,
              THRESHOLDS["settle_drift_px"], "<="),
             ("unsized images", r["unsized_images"]["count"], THRESHOLDS["unsized_images"], "<="),
+            ("misshaped images", r["rendered_ratio"]["count"], THRESHOLDS["misshaped_images"], "<="),
+            ("min cards/screen", -(r["card_fit"]["perScreen"] if r["card_fit"] else 0),
+             -THRESHOLDS["min_cards_per_screen"], "<="),
             ("horiz overflow px", r["overflow"]["overflow"], THRESHOLDS["horizontal_overflow_px"], "<="),
             ("targets < 24px (AA)", r["tap_targets"]["under_aa"], THRESHOLDS["targets_under_24"], "<="),
             ("topbar < 44px (AAA)", r["tap_targets"]["under_primary"],
@@ -355,6 +401,13 @@ def report(results: dict) -> bool:
             mark = "PASS" if passed else "FAIL"
             shown = f"{value:.4f}" if isinstance(value, float) else str(value)
             print(f"  [{mark}] {label:<19}: {shown:>8}  (limit {limit})")
+        cf = r["card_fit"]
+        if cf:
+            print(f"  card tile          : {cf['cardW']}x{cf['cardH']}px  ->  {cf['perScreen']} per screen")
+        rr = r["rendered_ratio"]
+        print(f"  image ratio        : {rr['checked']} checked, want {rr['want']}, {rr['count']} off")
+        if rr["count"]:
+            print(f"         misshaped      : {rr['sample']}")
         if r["unsized_images"]["count"]:
             print(f"         unsized sample : {r['unsized_images']['sample']}")
         if r["overflow"]["overflow"] > 0:

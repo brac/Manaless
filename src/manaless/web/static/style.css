@@ -108,7 +108,13 @@ select:focus { outline: 2px solid var(--accent); }
 /* Scryfall `normal` images are a fixed 488x680 (ratio 61/85, ~0.7176) — hardcode
    it, not a rounded decimal, so the box is reserved before the image loads and
    never reflows the grid on an htmx swap. */
-.card img { width: 100%; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 6px; display: block; }
+/* `height: auto` is load-bearing, do not drop it. The width/height ATTRIBUTES on
+   the tag become presentational hints (height: 680px); with `width: 100%` also set,
+   both dimensions are then specified and `aspect-ratio` is ignored outright —
+   which rendered 155x680 cards, ~1.1 per phone screen. `height: auto` hands the
+   height back to aspect-ratio while the attributes still supply the pre-load
+   ratio. */
+.card img { width: 100%; height: auto; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 6px; display: block; }
 /* Must match `.card img` exactly, or a card resizes the instant enrichment
    resolves and swaps the placeholder for the real image. */
 .card .noimg { aspect-ratio: 488 / 680; display: grid; place-items: center; text-align: center; padding: .4rem; background: var(--panel2); border-radius: 6px; font-size: .8rem; }
